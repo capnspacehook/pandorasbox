@@ -45,9 +45,18 @@ func (f *File) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	buf, err := f.data.Open()
-	if err != nil {
-		return 0, err
+	var (
+		err error
+		buf *memguard.LockedBuffer
+	)
+
+	if f.data != nil {
+		buf, err = f.data.Open()
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		return 0, io.EOF
 	}
 
 	core.Copy(p, buf.Bytes()[f.offset:])
@@ -56,7 +65,6 @@ func (f *File) Read(p []byte) (int, error) {
 	f.offset += int64(n)
 
 	return n, nil
-
 }
 
 func (f *File) ReadAt(b []byte, off int64) (n int, err error) {

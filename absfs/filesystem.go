@@ -44,6 +44,7 @@ type FileSystem interface {
 	Chdir(dir string) error
 	Getwd() (dir string, err error)
 	TempDir() string
+
 	Open(name string) (File, error)
 	Create(name string) (File, error)
 	MkdirAll(name string, perm os.FileMode) error
