@@ -81,14 +81,6 @@ func (fs *FileSystem) Create(name string) (absfs.File, error) {
 	return &File{fs, f}, nil
 }
 
-// func (fs *FileSystem) MkdirAll(name string, perm os.FileMode) error {
-// 	return os.MkdirAll(fs.fixPath(name), perm)
-// }
-
-// func (fs *FileSystem) RemoveAll(name string) (err error) {
-// 	return os.RemoveAll(fs.fixPath(name))
-// }
-
 func (fs *FileSystem) Truncate(name string, size int64) error {
 	return os.Truncate(fs.fixPath(name), size)
 }
@@ -109,10 +101,6 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 
 	return &File{fs, f}, err
 }
-
-// func (fs *FileSystem) Lstat(name string) (os.FileInfo, error) {
-// 	return os.Lstat(fs.fixPath(name))
-// }
 
 func (fs *FileSystem) Remove(name string) error {
 	return os.Remove(fs.fixPath(name))

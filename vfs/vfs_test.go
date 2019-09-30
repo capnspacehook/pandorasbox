@@ -1,4 +1,4 @@
-package memfs
+package vfs
 
 import (
 	"bytes"
@@ -110,7 +110,7 @@ func TestWalk(t *testing.T) {
 	})
 }
 
-func TestMemFS(t *testing.T) {
+func TestVFS(t *testing.T) {
 	fs, err := NewFS()
 	if err != nil {
 		t.Fatal(err)
