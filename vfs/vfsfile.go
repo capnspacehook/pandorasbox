@@ -8,6 +8,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/awnumar/memguard"
+	"github.com/awnumar/memguard/core"
+
 	"github.com/capnspacehook/pandorasbox/absfs"
 	"github.com/capnspacehook/pandorasbox/inode"
 )
@@ -18,7 +21,7 @@ type File struct {
 	name  string
 	flags int
 	node  *inode.Inode
-	data  []byte
+	data  *memguard.Enclave
 
 	offset    int64
 	diroffset int
@@ -35,15 +38,23 @@ func (f *File) Read(p []byte) (int, error) {
 	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
 		return 0, &os.PathError{Op: "read", Path: f.name, Err: syscall.EBADF} //os.ErrPermission
 	}
-	if f.node.IsDir() && len(f.data) == 0 {
+	if f.node.IsDir() && f.node.Size == 0 {
 		return 0, &os.PathError{Op: "read", Path: f.name, Err: syscall.EISDIR} //os.ErrPermission
 	}
-	if f.offset >= int64(len(f.data)) {
+	if f.offset >= f.node.Size {
 		return 0, io.EOF
 	}
 
-	n := copy(p, f.data[f.offset:])
+	buf, err := f.data.Open()
+	if err != nil {
+		return 0, err
+	}
+
+	core.Copy(p, buf.Bytes()[f.offset:])
+	n := len(buf.Bytes()[f.offset:])
+	buf.Destroy()
 	f.offset += int64(n)
+
 	return n, nil
 
 }
@@ -60,15 +71,35 @@ func (f *File) Write(p []byte) (int, error) {
 	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
 		return 0, &os.PathError{Op: "write", Path: f.name, Err: syscall.EBADF}
 	}
-	data := f.data
-	size := len(p) + int(f.offset)
-	if size > len(data) {
-		data = make([]byte, size)
-		copy(data, f.data)
+
+	var (
+		err  error
+		size = len(p) + int(f.offset)
+		buf  *memguard.LockedBuffer
+	)
+
+	if f.data != nil {
+		buf, err = f.data.Open()
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		buf = memguard.NewBuffer(size)
 	}
-	n := copy(data[int(f.offset):], p)
+
+	if size > buf.Size() {
+		newBuf := memguard.NewBuffer(size)
+		newBuf.Copy(buf.Bytes())
+		buf.Destroy()
+		buf = newBuf
+	}
+
+	buf.CopyAt(int(f.offset), p)
+	f.node.Size = int64(buf.Size())
+	f.data = buf.Seal()
+	n := len(p) - int(f.offset)
 	f.offset += int64(n)
-	f.data = data
+
 	return n, nil
 }
 
@@ -94,7 +125,7 @@ func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
 	case io.SeekCurrent:
 		f.offset += offset
 	case io.SeekEnd:
-		f.offset = int64(len(f.data)) + offset
+		f.offset = f.node.Size + offset
 	}
 	if f.offset < 0 {
 		f.offset = 0
@@ -111,7 +142,7 @@ func (f *File) Sync() error {
 		return nil
 	}
 	f.fs.data[int(f.node.Ino)] = f.data
-	f.node.Size = int64(len(f.data))
+
 	return nil
 }
 
@@ -165,13 +196,34 @@ func (f *File) Truncate(size int64) error {
 	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
 		return os.ErrPermission
 	}
-	if int(size) <= len(f.data) {
-		f.data = f.data[:int(size)]
+
+	var (
+		err error
+		buf *memguard.LockedBuffer
+	)
+
+	if f.data != nil {
+		buf, err = f.data.Open()
+		if err != nil {
+			return err
+		}
+	} else if size == 0 { // data is already nil, no-op
 		return nil
 	}
-	data := make([]byte, int(size))
-	copy(data, f.data)
-	f.data = data
+
+	f.node.Size = size
+	newBuf := memguard.NewBuffer(int(size))
+	if int(size) <= buf.Size() {
+		newBuf.Copy(buf.Bytes()[:int(size)])
+		buf.Destroy()
+		f.data = newBuf.Seal()
+		return nil
+	}
+
+	newBuf.Copy(buf.Bytes())
+	buf.Destroy()
+	f.data = newBuf.Seal()
+
 	return nil
 }
 

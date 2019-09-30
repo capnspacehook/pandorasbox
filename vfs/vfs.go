@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/awnumar/memguard"
+
 	"github.com/capnspacehook/pandorasbox/absfs"
 	"github.com/capnspacehook/pandorasbox/inode"
 )
@@ -24,7 +26,7 @@ type FileSystem struct {
 	ino  *inode.Ino
 
 	symlinks map[uint64]string
-	data     [][]byte
+	data     []*memguard.Enclave
 }
 
 func NewFS() (*FileSystem, error) {
@@ -36,7 +38,7 @@ func NewFS() (*FileSystem, error) {
 	fs.root = fs.ino.NewDir(fs.Umask)
 	fs.cwd = "/"
 	fs.dir = fs.root
-	fs.data = make([][]byte, 2)
+	fs.data = make([]*memguard.Enclave, 2)
 	fs.symlinks = make(map[uint64]string)
 	return fs, nil
 }
@@ -165,7 +167,8 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 
 		// if we must truncate the file
 		if truncate {
-			fs.data[int(node.Ino)] = fs.data[int(node.Ino)][:0]
+			// TODO: review this
+			fs.data[int(node.Ino)] = nil
 		}
 
 	} else { // !exists
@@ -180,7 +183,8 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 		if err != nil {
 			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: err}
 		}
-		fs.data = append(fs.data, []byte{})
+		// TODO: review this
+		fs.data = append(fs.data, nil)
 	}
 	data := fs.data[int(node.Ino)]
 
@@ -202,13 +206,24 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 	}
 
 	i := int(child.Ino)
+	buf, err := fs.data[i].Open()
+	if err != nil {
+		return err
+	}
+
+	// TODO: set size here
+	newBuf := memguard.NewBuffer(int(size))
 	if size <= child.Size {
-		fs.data[i] = fs.data[i][:int(size)]
+		newBuf.Copy(buf.Bytes()[:int(size)])
+		buf.Destroy()
+		fs.data[i] = newBuf.Seal()
 		return nil
 	}
-	data := make([]byte, int(size))
-	copy(data, fs.data[i])
-	fs.data[i] = data
+
+	newBuf.Copy(buf.Bytes())
+	buf.Destroy()
+	fs.data[i] = newBuf.Seal()
+
 	return nil
 }
 
@@ -237,7 +252,7 @@ func (fs *FileSystem) Mkdir(name string, perm os.FileMode) error {
 	child := fs.ino.NewDir(fs.Umask & perm)
 	parent.Link(filename, child)
 	child.Link("..", parent)
-	fs.data = append(fs.data, []byte{})
+	fs.data = append(fs.data, nil)
 	return nil
 }
 
