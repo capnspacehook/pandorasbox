@@ -1,9 +1,10 @@
-package pandorasbox
+package fstesting
 
 import (
 	"os"
 	"sort"
 
+	"github.com/capnspacehook/pandorasbox/absfs"
 	"github.com/xtgo/set"
 )
 
@@ -29,8 +30,8 @@ func ForEveryPermission(fn func(mode os.FileMode) error) error {
 
 func EveryPermission() []os.FileMode {
 	ints := make(sort.IntSlice, 512)
-	perms := []uint{OS_READ, OS_WRITE, OS_EX}
-	shifts := []uint{OS_OTH_SHIFT, OS_GROUP_SHIFT, OS_USER_SHIFT}
+	perms := []uint{absfs.OS_READ, absfs.OS_WRITE, absfs.OS_EX}
+	shifts := []uint{absfs.OS_OTH_SHIFT, absfs.OS_GROUP_SHIFT, absfs.OS_USER_SHIFT}
 
 	for i := 0; i < 512; i++ {
 		var mode os.FileMode

@@ -1,4 +1,4 @@
-package pandorasbox
+package memfs
 
 import (
 	"errors"
@@ -9,24 +9,27 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/capnspacehook/pandorasbox/absfs"
+	"github.com/capnspacehook/pandorasbox/inode"
 )
 
-type MemFileSystem struct {
+type FileSystem struct {
 	Umask   os.FileMode
 	Tempdir string
 
-	root *Inode
+	root *inode.Inode
 	cwd  string
-	dir  *Inode
-	ino  *Ino
+	dir  *inode.Inode
+	ino  *inode.Ino
 
 	symlinks map[uint64]string
 	data     [][]byte
 }
 
-func NewMemFS() (*MemFileSystem, error) {
-	fs := new(MemFileSystem)
-	fs.ino = new(Ino)
+func NewFS() (*FileSystem, error) {
+	fs := new(FileSystem)
+	fs.ino = new(inode.Ino)
 	fs.Tempdir = "/tmp"
 
 	fs.Umask = 0755
@@ -38,15 +41,15 @@ func NewMemFS() (*MemFileSystem, error) {
 	return fs, nil
 }
 
-func (fs *MemFileSystem) Separator() uint8 {
+func (fs *FileSystem) Separator() uint8 {
 	return '/'
 }
 
-func (fs *MemFileSystem) ListSeparator() uint8 {
+func (fs *FileSystem) ListSeparator() uint8 {
 	return ':'
 }
 
-func (fs *MemFileSystem) Rename(oldpath, newpath string) error {
+func (fs *FileSystem) Rename(oldpath, newpath string) error {
 	linkErr := &os.LinkError{
 		Op:  "rename",
 		Old: oldpath,
@@ -72,7 +75,7 @@ func (fs *MemFileSystem) Rename(oldpath, newpath string) error {
 	return nil
 }
 
-func (fs *MemFileSystem) Chdir(name string) (err error) {
+func (fs *FileSystem) Chdir(name string) (err error) {
 	if name == "/" {
 		fs.cwd = "/"
 		fs.dir = fs.root
@@ -98,30 +101,30 @@ func (fs *MemFileSystem) Chdir(name string) (err error) {
 	return nil
 }
 
-func (fs *MemFileSystem) Getwd() (dir string, err error) {
+func (fs *FileSystem) Getwd() (dir string, err error) {
 	return fs.cwd, nil
 }
 
-func (fs *MemFileSystem) TempDir() string {
+func (fs *FileSystem) TempDir() string {
 	return fs.Tempdir
 }
 
-func (fs *MemFileSystem) Open(name string) (File, error) {
+func (fs *FileSystem) Open(name string) (absfs.File, error) {
 	return fs.OpenFile(name, os.O_RDONLY, 0)
 }
 
-func (fs *MemFileSystem) Create(name string) (File, error) {
+func (fs *FileSystem) Create(name string) (absfs.File, error) {
 	return fs.OpenFile(name, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 }
 
-func (fs *MemFileSystem) OpenFile(name string, flag int, perm os.FileMode) (File, error) {
+func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
 	if name == "/" {
 		data := fs.data[int(fs.root.Ino)]
-		return &MemFile{fs: fs, name: name, flags: flag, node: fs.root, data: data}, nil
+		return &File{fs: fs, name: name, flags: flag, node: fs.root, data: data}, nil
 	}
 	if name == "." {
 		data := fs.data[int(fs.dir.Ino)]
-		return &MemFile{fs: fs, name: name, flags: flag, node: fs.dir, data: data}, nil
+		return &File{fs: fs, name: name, flags: flag, node: fs.dir, data: data}, nil
 	}
 
 	wd := fs.root
@@ -141,22 +144,22 @@ func (fs *MemFileSystem) OpenFile(name string, flag int, perm os.FileMode) (File
 		return nil, err
 	}
 
-	access := flag & O_ACCESS
+	access := flag & absfs.O_ACCESS
 	create := flag&os.O_CREATE != 0
 	truncate := flag&os.O_TRUNC != 0
 
 	// error if it does not exist, and we are not allowed to create it.
 	if !exists && !create {
-		return &InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.ENOENT}
+		return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.ENOENT}
 	}
 	if exists {
 		// err if exclusive create is required
 		if create && flag&os.O_EXCL != 0 {
-			return &InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.EEXIST}
+			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.EEXIST}
 		}
 		if node.IsDir() {
 			if access != os.O_RDONLY || truncate {
-				return &InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.EISDIR} // os.ErrNotExist}
+				return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.EISDIR} // os.ErrNotExist}
 			}
 		}
 
@@ -168,31 +171,31 @@ func (fs *MemFileSystem) OpenFile(name string, flag int, perm os.FileMode) (File
 	} else { // !exists
 		// error if we cannot create the file
 		if !create {
-			return &InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.ENOENT} //os.ErrNotExist}
+			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.ENOENT} //os.ErrNotExist}
 		}
 
 		// Create write-able file
 		node = fs.ino.New(fs.Umask & perm)
 		err := parent.Link(filename, node)
 		if err != nil {
-			return &InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: err}
+			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: err}
 		}
 		fs.data = append(fs.data, []byte{})
 	}
 	data := fs.data[int(node.Ino)]
 
 	if !create {
-		if access == os.O_RDONLY && node.Mode&OS_ALL_R == 0 ||
-			access == os.O_WRONLY && node.Mode&OS_ALL_W == 0 ||
-			access == os.O_RDWR && node.Mode&(OS_ALL_W|OS_ALL_R) == 0 {
-			return &InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: os.ErrPermission}
+		if access == os.O_RDONLY && node.Mode&absfs.OS_ALL_R == 0 ||
+			access == os.O_WRONLY && node.Mode&absfs.OS_ALL_W == 0 ||
+			access == os.O_RDWR && node.Mode&(absfs.OS_ALL_W|absfs.OS_ALL_R) == 0 {
+			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: os.ErrPermission}
 		}
 	}
-	return &MemFile{fs: fs, name: name, flags: flag, node: node, data: data}, nil
+	return &File{fs: fs, name: name, flags: flag, node: node, data: data}, nil
 }
 
-func (fs *MemFileSystem) Truncate(name string, size int64) error {
-	path := Abs(fs.cwd, name)
+func (fs *FileSystem) Truncate(name string, size int64) error {
+	path := inode.Abs(fs.cwd, name)
 	child, err := fs.root.Resolve(path)
 	if err != nil {
 		return err
@@ -209,7 +212,7 @@ func (fs *MemFileSystem) Truncate(name string, size int64) error {
 	return nil
 }
 
-func (fs *MemFileSystem) Mkdir(name string, perm os.FileMode) error {
+func (fs *FileSystem) Mkdir(name string, perm os.FileMode) error {
 	wd := fs.root
 	abs := name
 	if !filepath.IsAbs(abs) {
@@ -238,8 +241,8 @@ func (fs *MemFileSystem) Mkdir(name string, perm os.FileMode) error {
 	return nil
 }
 
-func (fs *MemFileSystem) MkdirAll(name string, perm os.FileMode) error {
-	name = Abs(fs.cwd, name)
+func (fs *FileSystem) MkdirAll(name string, perm os.FileMode) error {
+	name = inode.Abs(fs.cwd, name)
 	path := ""
 	for _, p := range strings.Split(name, string(fs.Separator())) {
 		if p == "" {
@@ -251,7 +254,7 @@ func (fs *MemFileSystem) MkdirAll(name string, perm os.FileMode) error {
 	return nil
 }
 
-func (fs *MemFileSystem) Remove(name string) (err error) {
+func (fs *FileSystem) Remove(name string) (err error) {
 	wd := fs.root
 	abs := name
 	if !filepath.IsAbs(abs) {
@@ -281,7 +284,7 @@ func (fs *MemFileSystem) Remove(name string) (err error) {
 	return parent.Unlink(filename)
 }
 
-func (fs *MemFileSystem) RemoveAll(name string) error {
+func (fs *FileSystem) RemoveAll(name string) error {
 	wd := fs.root
 	abs := name
 	if !filepath.IsAbs(abs) {
@@ -307,11 +310,11 @@ func (fs *MemFileSystem) RemoveAll(name string) error {
 }
 
 //Chtimes changes the access and modification times of the named file
-func (fs *MemFileSystem) Chtimes(name string, atime time.Time, mtime time.Time) error {
+func (fs *FileSystem) Chtimes(name string, atime time.Time, mtime time.Time) error {
 	var err error
 	node := fs.root
 
-	name = Abs(fs.cwd, name)
+	name = inode.Abs(fs.cwd, name)
 	if name != "/" {
 		node, err = fs.root.Resolve(strings.TrimLeft(name, "/"))
 		if err != nil {
@@ -325,11 +328,11 @@ func (fs *MemFileSystem) Chtimes(name string, atime time.Time, mtime time.Time) 
 }
 
 //Chown changes the owner and group ids of the named file
-func (fs *MemFileSystem) Chown(name string, uid, gid int) error {
+func (fs *FileSystem) Chown(name string, uid, gid int) error {
 	var err error
 	node := fs.root
 
-	name = Abs(fs.cwd, name)
+	name = inode.Abs(fs.cwd, name)
 	if name != "/" {
 		node, err = fs.root.Resolve(name)
 		if err != nil {
@@ -342,11 +345,11 @@ func (fs *MemFileSystem) Chown(name string, uid, gid int) error {
 }
 
 //Chmod changes the mode of the named file to mode.
-func (fs *MemFileSystem) Chmod(name string, mode os.FileMode) error {
+func (fs *FileSystem) Chmod(name string, mode os.FileMode) error {
 	var err error
 	node := fs.root
 
-	name = Abs(fs.cwd, name)
+	name = inode.Abs(fs.cwd, name)
 
 	// return nil
 	if name != "/" {
@@ -360,8 +363,8 @@ func (fs *MemFileSystem) Chmod(name string, mode os.FileMode) error {
 }
 
 // TODO: Avoid cyclical links
-func (fs *MemFileSystem) fileStat(cwd, name string) (*Inode, error) {
-	name = Abs(cwd, name)
+func (fs *FileSystem) fileStat(cwd, name string) (*inode.Inode, error) {
+	name = inode.Abs(cwd, name)
 	node, err := fs.root.Resolve(strings.TrimLeft(name, "/"))
 	if err != nil {
 		return nil, &os.PathError{Op: "stat", Path: name, Err: err}
@@ -373,7 +376,7 @@ func (fs *MemFileSystem) fileStat(cwd, name string) (*Inode, error) {
 	return fs.fileStat(filepath.Dir(name), fs.symlinks[node.Ino])
 }
 
-func (fs *MemFileSystem) Stat(name string) (os.FileInfo, error) {
+func (fs *FileSystem) Stat(name string) (os.FileInfo, error) {
 	if name == "/" {
 		return &fileinfo{"/", fs.root}, nil
 	}
@@ -381,11 +384,11 @@ func (fs *MemFileSystem) Stat(name string) (os.FileInfo, error) {
 	return &fileinfo{filepath.Base(name), node}, err
 }
 
-func (fs *MemFileSystem) Lstat(name string) (os.FileInfo, error) {
+func (fs *FileSystem) Lstat(name string) (os.FileInfo, error) {
 	if name == "/" {
 		return &fileinfo{"/", fs.root}, nil
 	}
-	name = Abs(fs.cwd, name)
+	name = inode.Abs(fs.cwd, name)
 	node, err := fs.root.Resolve(strings.TrimLeft(name, "/"))
 	if err != nil {
 		return nil, &os.PathError{Op: "remove", Path: name, Err: err}
@@ -394,13 +397,13 @@ func (fs *MemFileSystem) Lstat(name string) (os.FileInfo, error) {
 	return &fileinfo{filepath.Base(name), node}, nil
 }
 
-func (fs *MemFileSystem) Lchown(name string, uid, gid int) error {
+func (fs *FileSystem) Lchown(name string, uid, gid int) error {
 	if name == "/" {
 		fs.root.Uid = uint32(uid)
 		fs.root.Gid = uint32(gid)
 		return nil
 	}
-	name = Abs(fs.cwd, name)
+	name = inode.Abs(fs.cwd, name)
 	node, err := fs.root.Resolve(strings.TrimLeft(name, "/"))
 	if err != nil {
 		return err
@@ -411,7 +414,7 @@ func (fs *MemFileSystem) Lchown(name string, uid, gid int) error {
 	return nil
 }
 
-func (fs *MemFileSystem) Readlink(name string) (string, error) {
+func (fs *FileSystem) Readlink(name string) (string, error) {
 	var ino uint64
 	if name == "/" {
 		ino = fs.root.Ino
@@ -426,7 +429,7 @@ func (fs *MemFileSystem) Readlink(name string) (string, error) {
 	return fs.symlinks[ino], nil
 }
 
-func (fs *MemFileSystem) Symlink(oldname, newname string) error {
+func (fs *FileSystem) Symlink(oldname, newname string) error {
 	wd := fs.root
 	if !filepath.IsAbs(newname) {
 		wd = fs.dir
@@ -468,7 +471,7 @@ func (fs *MemFileSystem) Symlink(oldname, newname string) error {
 	return nil
 }
 
-func (fs *MemFileSystem) Walk(name string, fn pathfilepath.WalkFunc) error {
+func (fs *FileSystem) Walk(name string, fn pathfilepath.WalkFunc) error {
 	var stack []string
 	push := func(path string) {
 		stack = append(stack, path)

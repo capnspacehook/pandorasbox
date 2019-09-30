@@ -1,4 +1,4 @@
-package pandorasbox
+package memfs
 
 import (
 	"bytes"
@@ -9,10 +9,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/capnspacehook/pandorasbox/fstesting"
 )
 
 func TestWalk(t *testing.T) {
-	fs, err := NewMemFS()
+	fs, err := NewFS()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +111,7 @@ func TestWalk(t *testing.T) {
 }
 
 func TestMemFS(t *testing.T) {
-	fs, err := NewMemFS()
+	fs, err := NewFS()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,8 +145,8 @@ func TestMemFS(t *testing.T) {
 	}
 
 	maxerrors := 10
-	AutoTest(0, func(testcase *Testcase) error {
-		result, err := FsTest(fs, filepath.Dir(testcase.Path), testcase)
+	fstesting.AutoTest(0, func(testcase *fstesting.Testcase) error {
+		result, err := fstesting.FsTest(fs, filepath.Dir(testcase.Path), testcase)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,7 +215,7 @@ func TestMemFS(t *testing.T) {
 }
 
 func TestMkdir(t *testing.T) {
-	fs, err := NewMemFS()
+	fs, err := NewFS()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +265,7 @@ outer:
 }
 
 func TestOpenWrite(t *testing.T) {
-	fs, err := NewMemFS()
+	fs, err := NewFS()
 	if err != nil {
 		t.Fatal(err)
 	}

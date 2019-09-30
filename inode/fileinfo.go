@@ -1,4 +1,4 @@
-package pandorasbox
+package inode
 
 import (
 	"os"

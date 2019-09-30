@@ -1,4 +1,4 @@
-package pandorasbox
+package osfs
 
 import (
 	"fmt"
@@ -6,10 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/capnspacehook/pandorasbox/absfs"
+	"github.com/capnspacehook/pandorasbox/fstesting"
 )
 
 func TestOSWalk(t *testing.T) {
-	fs, err := NewOSFS()
+	fs, err := NewFS()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,10 +66,10 @@ func TestOSWalk(t *testing.T) {
 
 func TestOSFS(t *testing.T) {
 
-	var ofs FileSystem
+	var ofs absfs.FileSystem
 
 	t.Run("NewFs", func(t *testing.T) {
-		fs, err := NewOSFS()
+		fs, err := NewFS()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -121,15 +124,15 @@ func TestOSFS(t *testing.T) {
 	})
 
 	// Move to the test directory for all further tests
-	testdir, cleanup, err := FsTestDir(ofs, ofs.TempDir())
+	testdir, cleanup, err := fstesting.FsTestDir(ofs, ofs.TempDir())
 	defer cleanup()
 	if err != nil {
 		t.Fatal(err)
 	}
 	maxerrors := 10
 
-	AutoTest(0, func(testcase *Testcase) error {
-		result, err := FsTest(ofs, testdir, testcase)
+	fstesting.AutoTest(0, func(testcase *fstesting.Testcase) error {
+		result, err := fstesting.FsTest(ofs, testdir, testcase)
 		if err != nil {
 			t.Fatal(err)
 		}

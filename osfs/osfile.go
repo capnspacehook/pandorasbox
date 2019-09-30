@@ -1,4 +1,4 @@
-package pandorasbox
+package osfs
 
 import (
 	"fmt"
@@ -6,40 +6,40 @@ import (
 	"path/filepath"
 )
 
-type OSFile struct {
-	filer *OSFileSystem
+type File struct {
+	filer *FileSystem
 	f     *os.File
 }
 
-func (f *OSFile) Name() string {
+func (f *File) Name() string {
 	return f.f.Name()
 }
 
-func (f *OSFile) Read(p []byte) (int, error) {
+func (f *File) Read(p []byte) (int, error) {
 	return f.f.Read(p)
 }
 
-func (f *OSFile) ReadAt(b []byte, off int64) (n int, err error) {
+func (f *File) ReadAt(b []byte, off int64) (n int, err error) {
 	return f.f.ReadAt(b, off)
 }
 
-func (f *OSFile) Write(p []byte) (int, error) {
+func (f *File) Write(p []byte) (int, error) {
 	return f.f.Write(p)
 }
 
-func (f *OSFile) WriteAt(b []byte, off int64) (n int, err error) {
+func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 	return f.f.WriteAt(b, off)
 }
 
-func (f *OSFile) Close() error {
+func (f *File) Close() error {
 	return f.f.Close()
 }
 
-func (f *OSFile) Seek(offset int64, whence int) (ret int64, err error) {
+func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
 	return f.f.Seek(offset, whence)
 }
 
-func (f *OSFile) Stat() (os.FileInfo, error) {
+func (f *File) Stat() (os.FileInfo, error) {
 	if !filepath.IsAbs(f.f.Name()) {
 		panic("not absolute path: " + f.f.Name())
 	}
@@ -57,22 +57,22 @@ func (f *OSFile) Stat() (os.FileInfo, error) {
 	return info, err
 }
 
-func (f *OSFile) Sync() error {
+func (f *File) Sync() error {
 	return f.f.Sync()
 }
 
-func (f *OSFile) Readdir(n int) ([]os.FileInfo, error) {
+func (f *File) Readdir(n int) ([]os.FileInfo, error) {
 	return f.f.Readdir(n)
 }
 
-func (f *OSFile) Readdirnames(n int) ([]string, error) {
+func (f *File) Readdirnames(n int) ([]string, error) {
 	return f.f.Readdirnames(n)
 }
 
-func (f *OSFile) Truncate(size int64) error {
+func (f *File) Truncate(size int64) error {
 	return f.f.Truncate(size)
 }
 
-func (f *OSFile) WriteString(s string) (n int, err error) {
+func (f *File) WriteString(s string) (n int, err error) {
 	return f.f.WriteString(s)
 }

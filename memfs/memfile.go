@@ -1,4 +1,4 @@
-package pandorasbox
+package memfs
 
 import (
 	"errors"
@@ -7,29 +7,32 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/capnspacehook/pandorasbox/absfs"
+	"github.com/capnspacehook/pandorasbox/inode"
 )
 
-type MemFile struct {
-	fs *MemFileSystem
+type File struct {
+	fs *FileSystem
 
 	name  string
 	flags int
-	node  *Inode
+	node  *inode.Inode
 	data  []byte
 
 	offset    int64
 	diroffset int
 }
 
-func (f *MemFile) Name() string {
+func (f *File) Name() string {
 	return f.name
 }
 
-func (f *MemFile) Read(p []byte) (int, error) {
+func (f *File) Read(p []byte) (int, error) {
 	if f.flags == 3712 {
 		return 0, io.EOF
 	}
-	if f.flags&O_ACCESS == os.O_WRONLY {
+	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
 		return 0, &os.PathError{Op: "read", Path: f.name, Err: syscall.EBADF} //os.ErrPermission
 	}
 	if f.node.IsDir() && len(f.data) == 0 {
@@ -45,17 +48,16 @@ func (f *MemFile) Read(p []byte) (int, error) {
 
 }
 
-func (f *MemFile) ReadAt(b []byte, off int64) (n int, err error) {
-	if f.flags&O_ACCESS == os.O_WRONLY {
+func (f *File) ReadAt(b []byte, off int64) (n int, err error) {
+	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
 		return 0, os.ErrPermission
 	}
 	f.offset = off
 	return f.Read(b)
 }
 
-func (f *MemFile) Write(p []byte) (int, error) {
-
-	if f.flags&O_ACCESS == os.O_RDONLY {
+func (f *File) Write(p []byte) (int, error) {
+	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
 		return 0, &os.PathError{Op: "write", Path: f.name, Err: syscall.EBADF}
 	}
 	data := f.data
@@ -70,12 +72,12 @@ func (f *MemFile) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-func (f *MemFile) WriteAt(b []byte, off int64) (n int, err error) {
+func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 	f.offset = off
 	return f.Write(b)
 }
 
-func (f *MemFile) Close() error {
+func (f *File) Close() error {
 	err := f.Sync()
 	if err != nil {
 		return err
@@ -85,7 +87,7 @@ func (f *MemFile) Close() error {
 	return nil
 }
 
-func (f *MemFile) Seek(offset int64, whence int) (ret int64, err error) {
+func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
 	switch whence {
 	case io.SeekStart:
 		f.offset = offset
@@ -100,12 +102,12 @@ func (f *MemFile) Seek(offset int64, whence int) (ret int64, err error) {
 	return f.offset, nil
 }
 
-func (f *MemFile) Stat() (os.FileInfo, error) {
+func (f *File) Stat() (os.FileInfo, error) {
 	return &fileinfo{filepath.Base(f.name), f.node}, nil
 }
 
-func (f *MemFile) Sync() error {
-	if f.flags&O_ACCESS == os.O_RDONLY {
+func (f *File) Sync() error {
+	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
 		return nil
 	}
 	f.fs.data[int(f.node.Ino)] = f.data
@@ -113,8 +115,8 @@ func (f *MemFile) Sync() error {
 	return nil
 }
 
-func (f *MemFile) Readdir(n int) ([]os.FileInfo, error) {
-	if f.flags&O_ACCESS == os.O_WRONLY {
+func (f *File) Readdir(n int) ([]os.FileInfo, error) {
+	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
 		return nil, os.ErrPermission
 	}
 	if !f.node.IsDir() {
@@ -136,9 +138,9 @@ func (f *MemFile) Readdir(n int) ([]os.FileInfo, error) {
 	return infos, nil
 }
 
-func (f *MemFile) Readdirnames(n int) ([]string, error) {
+func (f *File) Readdirnames(n int) ([]string, error) {
 	var list []string
-	if f.flags&O_ACCESS == os.O_WRONLY {
+	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
 		return list, os.ErrPermission
 	}
 	if !f.node.IsDir() {
@@ -159,8 +161,8 @@ func (f *MemFile) Readdirnames(n int) ([]string, error) {
 	return list, nil
 }
 
-func (f *MemFile) Truncate(size int64) error {
-	if f.flags&O_ACCESS == os.O_RDONLY {
+func (f *File) Truncate(size int64) error {
+	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
 		return os.ErrPermission
 	}
 	if int(size) <= len(f.data) {
@@ -173,13 +175,13 @@ func (f *MemFile) Truncate(size int64) error {
 	return nil
 }
 
-func (f *MemFile) WriteString(s string) (n int, err error) {
+func (f *File) WriteString(s string) (n int, err error) {
 	return f.Write([]byte(s))
 }
 
 type fileinfo struct {
 	name string
-	node *Inode
+	node *inode.Inode
 }
 
 func (i *fileinfo) Name() string {

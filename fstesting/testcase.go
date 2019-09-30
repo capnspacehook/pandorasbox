@@ -1,4 +1,4 @@
-package pandorasbox
+package fstesting
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/capnspacehook/pandorasbox/absfs"
 	"github.com/fatih/color"
 )
 
@@ -180,7 +181,7 @@ func testDir() (testdir string, cleanup func(), err error) {
 // Returns the path to the new directory, a cleanup function and an error.
 // The `cleanup` method changes the directory back to the original location
 // and removes testdir and all of it's contents.
-func FsTestDir(fs FileSystem, path string) (testdir string, cleanup func(), err error) {
+func FsTestDir(fs absfs.FileSystem, path string) (testdir string, cleanup func(), err error) {
 
 	timestamp := time.Now().Format(time.RFC3339)
 	testdir = filepath.Join(path, fmt.Sprintf("FsTestDir%s", timestamp))
@@ -351,7 +352,7 @@ func AutoTest(startno int, fn func(*Testcase) error) error {
 	})
 }
 
-func FsTest(fs FileSystem, path string, testcase *Testcase) (*Testcase, error) {
+func FsTest(fs absfs.FileSystem, path string, testcase *Testcase) (*Testcase, error) {
 	// defer fmt.Fprintf(os.Stderr, "FsTest %s\n", blue(path))
 	name, err := pretest(fs, path, testcase)
 	if err != nil {
@@ -363,7 +364,7 @@ func FsTest(fs FileSystem, path string, testcase *Testcase) (*Testcase, error) {
 	return newtestcase, err
 }
 
-func createFile(fs FileSystem, name string) error {
+func createFile(fs absfs.FileSystem, name string) error {
 	info, err := fs.Stat(name)
 	if !os.IsNotExist(err) {
 		return fmt.Errorf("file exists unexpectedly %s %q", info.Mode(), name)
@@ -378,7 +379,7 @@ func createFile(fs FileSystem, name string) error {
 	return err
 }
 
-func pretest(fs FileSystem, path string, testcase *Testcase) (string, error) {
+func pretest(fs absfs.FileSystem, path string, testcase *Testcase) (string, error) {
 	name := filepath.Join(path, fmt.Sprintf("fstestingFile%08d", testcase.TestNo))
 	switch testcase.PreCondition {
 	case "":
@@ -412,12 +413,12 @@ func pretest(fs FileSystem, path string, testcase *Testcase) (string, error) {
 	return name, nil
 }
 
-func posttest(fs FileSystem, testcase *Testcase) error {
+func posttest(fs absfs.FileSystem, testcase *Testcase) error {
 
 	return nil
 }
 
-func test(fs FileSystem, testNo int, name string, flags int, mode os.FileMode, precondition string) (*Testcase, error) {
+func test(fs absfs.FileSystem, testNo int, name string, flags int, mode os.FileMode, precondition string) (*Testcase, error) {
 	Errors := make(map[string]*ErrorReport)
 
 	// OpenFile test
