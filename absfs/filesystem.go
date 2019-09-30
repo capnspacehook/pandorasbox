@@ -8,8 +8,7 @@ import (
 
 var ErrNotImplemented = errors.New("not implemented")
 
-type Filer interface {
-
+type FileSystem interface {
 	// OpenFile opens a file using the given flags and the given mode.
 	OpenFile(name string, flag int, perm os.FileMode) (File, error)
 
@@ -39,10 +38,6 @@ type Filer interface {
 
 	//Chown changes the owner and group ids of the named file
 	Chown(name string, uid, gid int) error
-}
-
-type FileSystem interface {
-	Filer
 
 	Separator() uint8
 	ListSeparator() uint8
@@ -52,12 +47,8 @@ type FileSystem interface {
 	Open(name string) (File, error)
 	Create(name string) (File, error)
 	MkdirAll(name string, perm os.FileMode) error
-	RemoveAll(path string) (err error)
+	RemoveAll(path string) error
 	Truncate(name string, size int64) error
-}
-
-type SymLinker interface {
-	// SameFile(fi1, fi2 os.FileInfo) bool
 
 	// Lstat returns a FileInfo describing the named file. If the file is a
 	// symbolic link, the returned FileInfo describes the symbolic link. Lstat
@@ -79,9 +70,4 @@ type SymLinker interface {
 	// Symlink creates newname as a symbolic link to oldname. If there is an
 	// error, it will be of type *LinkError.
 	Symlink(oldname, newname string) error
-}
-
-type SymlinkFileSystem interface {
-	FileSystem
-	SymLinker
 }
