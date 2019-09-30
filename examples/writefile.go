@@ -11,6 +11,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	defer box.Close()
 
 	if err = box.WriteFile("vfs://file.txt", []byte("Testing testing 1 2 3"), 0644); err != nil {
 		panic(err)

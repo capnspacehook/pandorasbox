@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/awnumar/memguard"
 	"github.com/capnspacehook/pandorasbox/absfs"
 	"github.com/capnspacehook/pandorasbox/ioutil"
 	"github.com/capnspacehook/pandorasbox/osfs"
@@ -238,4 +239,8 @@ func (b *Box) TempDir(dir, prefix string) (string, error) {
 	}
 
 	return ioutil.TempDir(b.osfs, dir, prefix)
+}
+
+func (b *Box) Close() {
+	memguard.Purge()
 }
