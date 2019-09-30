@@ -36,12 +36,8 @@ type Box struct {
 	vfs  *vfs.FileSystem
 }
 
-func NewBox() (*Box, error) {
-	var (
-		err error
-		box = new(Box)
-	)
-
+func NewBox() (box *Box, err error) {
+	box = new(Box)
 	box.osfs, err = osfs.NewFS()
 	if err != nil {
 		return nil, err
