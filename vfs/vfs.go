@@ -10,7 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/awnumar/fastrand"
 	"github.com/awnumar/memguard"
+	"github.com/awnumar/memguard/core"
 
 	"github.com/capnspacehook/pandorasbox/absfs"
 	"github.com/capnspacehook/pandorasbox/inode"
@@ -26,7 +28,7 @@ type FileSystem struct {
 	ino  *inode.Ino
 
 	symlinks map[uint64]string
-	data     []*memguard.Enclave
+	data     []*sealedFile
 }
 
 func NewFS() (*FileSystem, error) {
@@ -38,7 +40,7 @@ func NewFS() (*FileSystem, error) {
 	fs.root = fs.ino.NewDir(fs.Umask)
 	fs.cwd = "/"
 	fs.dir = fs.root
-	fs.data = make([]*memguard.Enclave, 2)
+	fs.data = make([]*sealedFile, 2)
 	fs.symlinks = make(map[uint64]string)
 	return fs, nil
 }
@@ -167,8 +169,7 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 
 		// if we must truncate the file
 		if truncate {
-			// TODO: review this
-			fs.data[int(node.Ino)] = nil
+			fs.data[int(node.Ino)] = &sealedFile{}
 		}
 
 	} else { // !exists
@@ -183,8 +184,7 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 		if err != nil {
 			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: err}
 		}
-		// TODO: review this
-		fs.data = append(fs.data, nil)
+		fs.data = append(fs.data, &sealedFile{})
 	}
 	data := fs.data[int(node.Ino)]
 
@@ -205,24 +205,46 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 		return err
 	}
 
-	i := int(child.Ino)
-	buf, err := fs.data[i].Open()
-	if err != nil {
-		return err
-	}
+	var (
+		i         = int(child.Ino)
+		plaintext []byte
+	)
 
-	// TODO: set size here
-	newBuf := memguard.NewBuffer(int(size))
-	if size <= child.Size {
-		newBuf.Copy(buf.Bytes()[:int(size)])
-		buf.Destroy()
-		fs.data[i] = newBuf.Seal()
+	if fs.data[i].Size() != 0 {
+		key, err := fs.data[i].key.Open()
+		if err != nil {
+			return err
+		}
+		plaintext = make([]byte, fs.data[i].Size())
+		_, err = core.Decrypt(fs.data[i].ciphertext, key.Bytes(), plaintext)
+		if err != nil {
+			return err
+		}
+		key.Destroy()
+	} else if size == 0 { // data is already nil, no-op
 		return nil
 	}
 
-	newBuf.Copy(buf.Bytes())
-	buf.Destroy()
-	fs.data[i] = newBuf.Seal()
+	// TODO: should this be copied in constant time?
+	if int(size) <= fs.data[i].Size() {
+		plaintext = plaintext[:int(size)]
+		newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
+		fs.data[i].ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
+		fs.data[i].key = newKey.Seal()
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	data := make([]byte, int(size))
+	core.Move(data, plaintext)
+	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
+	fs.data[i].ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
+	fs.data[i].key = newKey.Seal()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -252,7 +274,7 @@ func (fs *FileSystem) Mkdir(name string, perm os.FileMode) error {
 	child := fs.ino.NewDir(fs.Umask & perm)
 	parent.Link(filename, child)
 	child.Link("..", parent)
-	fs.data = append(fs.data, nil)
+	fs.data = append(fs.data, &sealedFile{})
 	return nil
 }
 

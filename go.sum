@@ -1,5 +1,9 @@
+github.com/awnumar/fastrand v0.0.0-20190819002326-5ead440ff58c h1:tZIePDbqGTGy8Ad/pyWsTqiulBZao6KyIh6tewCyBJw=
+github.com/awnumar/fastrand v0.0.0-20190819002326-5ead440ff58c/go.mod h1:TO59kqNCiDBKS0qjRYUI8qJtkFL6SkP2EKqeOQ6xg/o=
 github.com/awnumar/memcall v0.0.0-20190811121346-2affb857f00a h1:6J0k3xexdYoYYUdzPqnoAKxu1YokxUa/XTIunY7IzrY=
 github.com/awnumar/memcall v0.0.0-20190811121346-2affb857f00a/go.mod h1:sbEXyqNZZ3Cebk+6zOUmFNN8OuHHlugjiUmqn2tfiiM=
+github.com/awnumar/memcall v0.0.0-20190816154910-db5ea08008a3 h1:pq6ZBJsmKeTOUOgeX3Ed6Td4loLrca4xIq6lstFN7AI=
+github.com/awnumar/memcall v0.0.0-20190816154910-db5ea08008a3/go.mod h1:CszzLMKGwNr15cNA+0SuWkZLnPXGgUw+9kxRNbwUVnE=
 github.com/awnumar/memguard v0.19.1 h1:y9k2r1XKaBeLWvB3kyQPNyxD/+qxwDjeZwX+4VZXzUk=
 github.com/awnumar/memguard v0.19.1/go.mod h1:tewJ+MrJ12cFtR5gH5zNJs8A6BjBv8709binaV+1pws=
 github.com/fatih/color v1.7.0 h1:DkWD4oS2D8LGGgTQ6IvwJJXSL5Vp2ffcQg58nFV38Ys=

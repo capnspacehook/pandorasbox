@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/awnumar/fastrand"
 	"github.com/awnumar/memguard"
 	"github.com/awnumar/memguard/core"
 
@@ -15,16 +16,31 @@ import (
 	"github.com/capnspacehook/pandorasbox/inode"
 )
 
+const keySize = 32
+
 type File struct {
 	fs *FileSystem
 
 	name  string
 	flags int
 	node  *inode.Inode
-	data  *memguard.Enclave
+	data  *sealedFile
 
 	offset    int64
 	diroffset int
+}
+
+type sealedFile struct {
+	ciphertext []byte
+	key        *memguard.Enclave
+}
+
+func (s *sealedFile) Size() int {
+	if len(s.ciphertext) == 0 {
+		return 0
+	}
+
+	return len(s.ciphertext) - core.Overhead
 }
 
 func (f *File) Name() string {
@@ -38,10 +54,10 @@ func (f *File) Read(p []byte) (int, error) {
 	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
 		return 0, &os.PathError{Op: "read", Path: f.name, Err: syscall.EBADF} //os.ErrPermission
 	}
-	if f.node.IsDir() && f.node.Size == 0 {
+	if f.node.IsDir() && f.data.Size() == 0 {
 		return 0, &os.PathError{Op: "read", Path: f.name, Err: syscall.EISDIR} //os.ErrPermission
 	}
-	if f.offset >= f.node.Size {
+	if f.offset >= int64(f.data.Size()) {
 		return 0, io.EOF
 	}
 
@@ -50,8 +66,8 @@ func (f *File) Read(p []byte) (int, error) {
 		buf *memguard.LockedBuffer
 	)
 
-	if f.data != nil {
-		buf, err = f.data.Open()
+	if f.data.Size() != 0 {
+		buf, err = f.data.key.Open()
 		if err != nil {
 			return 0, err
 		}
@@ -59,9 +75,15 @@ func (f *File) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	core.Copy(p, buf.Bytes()[f.offset:])
-	n := len(buf.Bytes()[f.offset:])
+	plaintext := make([]byte, f.data.Size())
+	_, err = core.Decrypt(f.data.ciphertext, buf.Bytes(), plaintext)
 	buf.Destroy()
+	if err != nil {
+		return 0, err
+	}
+
+	n := len(plaintext[f.offset:])
+	core.Move(p, plaintext[f.offset:])
 	f.offset += int64(n)
 
 	return n, nil
@@ -81,30 +103,38 @@ func (f *File) Write(p []byte) (int, error) {
 	}
 
 	var (
-		err  error
-		size = len(p) + int(f.offset)
-		buf  *memguard.LockedBuffer
+		err       error
+		plaintext = make([]byte, f.data.Size())
 	)
 
-	if f.data != nil {
-		buf, err = f.data.Open()
+	if f.data.Size() != 0 {
+		key, err := f.data.key.Open()
 		if err != nil {
 			return 0, err
 		}
-	} else {
-		buf = memguard.NewBuffer(size)
+		_, err = core.Decrypt(f.data.ciphertext, key.Bytes(), plaintext)
+		if err != nil {
+			return 0, err
+		}
+		key.Destroy()
 	}
 
-	if size > buf.Size() {
-		newBuf := memguard.NewBuffer(size)
-		newBuf.Copy(buf.Bytes())
-		buf.Destroy()
-		buf = newBuf
+	data := plaintext
+	size := len(p) + int(f.offset)
+	if size > f.data.Size() {
+		data = make([]byte, size)
+		core.Copy(data, plaintext)
+	}
+	core.Wipe(plaintext)
+
+	core.Copy(data[int(f.offset):], p)
+	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
+	f.data.ciphertext, err = core.Encrypt(data, newKey.Bytes())
+	f.data.key = newKey.Seal()
+	if err != nil {
+		return 0, err
 	}
 
-	buf.CopyAt(int(f.offset), p)
-	f.node.Size = int64(buf.Size())
-	f.data = buf.Seal()
 	n := len(p) - int(f.offset)
 	f.offset += int64(n)
 
@@ -133,7 +163,7 @@ func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
 	case io.SeekCurrent:
 		f.offset += offset
 	case io.SeekEnd:
-		f.offset = f.node.Size + offset
+		f.offset = int64(f.data.Size()) + offset
 	}
 	if f.offset < 0 {
 		f.offset = 0
@@ -150,6 +180,7 @@ func (f *File) Sync() error {
 		return nil
 	}
 	f.fs.data[int(f.node.Ino)] = f.data
+	f.node.Size = int64(f.data.Size())
 
 	return nil
 }
@@ -206,31 +237,45 @@ func (f *File) Truncate(size int64) error {
 	}
 
 	var (
-		err error
-		buf *memguard.LockedBuffer
+		err       error
+		plaintext []byte
 	)
 
-	if f.data != nil {
-		buf, err = f.data.Open()
+	if f.data.Size() != 0 {
+		key, err := f.data.key.Open()
 		if err != nil {
 			return err
 		}
+		plaintext = make([]byte, f.data.Size())
+		_, err = core.Decrypt(f.data.ciphertext, key.Bytes(), plaintext)
+		if err != nil {
+			return err
+		}
+		key.Destroy()
 	} else if size == 0 { // data is already nil, no-op
 		return nil
 	}
 
-	f.node.Size = size
-	newBuf := memguard.NewBuffer(int(size))
-	if int(size) <= buf.Size() {
-		newBuf.Copy(buf.Bytes()[:int(size)])
-		buf.Destroy()
-		f.data = newBuf.Seal()
+	// TODO: should this be copied in constant time?
+	if int(size) <= f.data.Size() {
+		plaintext = plaintext[:int(size)]
+		newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
+		f.data.ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
+		f.data.key = newKey.Seal()
+		if err != nil {
+			return err
+		}
 		return nil
 	}
 
-	newBuf.Copy(buf.Bytes())
-	buf.Destroy()
-	f.data = newBuf.Seal()
+	data := make([]byte, int(size))
+	core.Move(data, plaintext)
+	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
+	f.data.ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
+	f.data.key = newKey.Seal()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
