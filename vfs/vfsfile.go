@@ -261,6 +261,9 @@ func (f *File) Truncate(size int64) error {
 	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
 		return os.ErrPermission
 	}
+	if size < 0 {
+		return &os.PathError{Op: "truncate", Path: f.name, Err: os.ErrClosed}
+	}
 
 	f.Lock()
 	defer f.Unlock()
