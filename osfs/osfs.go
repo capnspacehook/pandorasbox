@@ -11,8 +11,8 @@ import (
 type FileSystem struct {
 }
 
-func NewFS() (*FileSystem, error) {
-	return &FileSystem{}, nil
+func NewFS() *FileSystem {
+	return &FileSystem{}
 }
 
 func (fs *FileSystem) Separator() uint8 {

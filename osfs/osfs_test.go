@@ -12,10 +12,7 @@ import (
 )
 
 func TestOSWalk(t *testing.T) {
-	fs, err := NewFS()
-	if err != nil {
-		t.Fatal(err)
-	}
+	fs := NewFS()
 	testpath := ".."
 	abs, err := filepath.Abs(testpath)
 	if err != nil {
@@ -69,11 +66,7 @@ func TestOSFS(t *testing.T) {
 	var ofs absfs.FileSystem
 
 	t.Run("NewFs", func(t *testing.T) {
-		fs, err := NewFS()
-		if err != nil {
-			t.Fatal(err)
-		}
-
+		fs := NewFS()
 		ofs = fs
 	})
 

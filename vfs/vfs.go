@@ -34,7 +34,7 @@ type FileSystem struct {
 	data     []*sealedFile
 }
 
-func NewFS() (*FileSystem, error) {
+func NewFS() *FileSystem {
 	fs := new(FileSystem)
 	fs.ino = new(inode.Ino)
 	fs.Tempdir = "/tmp"
@@ -45,7 +45,8 @@ func NewFS() (*FileSystem, error) {
 	fs.dir = fs.root
 	fs.data = make([]*sealedFile, 2)
 	fs.symlinks = make(map[uint64]string)
-	return fs, nil
+
+	return fs
 }
 
 func (fs *FileSystem) Separator() uint8 {

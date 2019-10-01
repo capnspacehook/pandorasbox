@@ -37,18 +37,12 @@ type Box struct {
 	vfs  *vfs.FileSystem
 }
 
-func NewBox() (box *Box, err error) {
-	box = new(Box)
-	box.osfs, err = osfs.NewFS()
-	if err != nil {
-		return nil, err
-	}
-	box.vfs, err = vfs.NewFS()
-	if err != nil {
-		return nil, err
-	}
+func NewBox() *Box {
+	box := new(Box)
+	box.osfs = osfs.NewFS()
+	box.vfs = vfs.NewFS()
 
-	return box, err
+	return box
 }
 
 func (b *Box) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
