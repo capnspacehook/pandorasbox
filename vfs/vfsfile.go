@@ -151,7 +151,7 @@ func (f *File) Write(p []byte) (int, error) {
 		return 0, err
 	}
 
-	n := len(p) - int(f.offset)
+	n := len(p)
 	f.offset += int64(n)
 
 	return n, nil

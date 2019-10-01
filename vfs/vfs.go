@@ -139,12 +139,17 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 		data := fs.data[int(fs.root.Ino)]
 		return &File{fs: fs, name: name, flags: flag, node: fs.root, data: data}, nil
 	}
+	appendFile := flag&absfs.O_APPEND != 0
 	if name == "." {
 		data := fs.data[int(fs.dir.Ino)]
 		file := &File{fs: fs, name: name, flags: flag, node: fs.dir, data: data}
 		if data != nil {
+			if appendFile {
+				file.offset = data.size
+			}
 			data.f = file
 		}
+
 		return file, nil
 	}
 
@@ -166,8 +171,8 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 	}
 
 	access := flag & absfs.O_ACCESS
-	create := flag&os.O_CREATE != 0
-	truncate := flag&os.O_TRUNC != 0
+	create := flag&absfs.O_CREATE != 0
+	truncate := flag&absfs.O_TRUNC != 0
 
 	// error if it does not exist, and we are not allowed to create it.
 	if !exists && !create {
@@ -215,6 +220,9 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 
 	file := &File{fs: fs, name: name, flags: flag, node: node, data: data}
 	if data != nil {
+		if appendFile {
+			file.offset = data.size
+		}
 		data.f = file
 	}
 
