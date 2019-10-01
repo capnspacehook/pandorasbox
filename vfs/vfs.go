@@ -375,6 +375,7 @@ func (fs *FileSystem) Remove(name string) (err error) {
 			return &os.PathError{Op: "remove", Path: dir, Err: err}
 		}
 	}
+
 	return parent.Unlink(filename)
 }
 
@@ -475,15 +476,15 @@ func (fs *FileSystem) fileStat(cwd, name string) (*inode.Inode, error) {
 
 func (fs *FileSystem) Stat(name string) (os.FileInfo, error) {
 	if name == "/" {
-		return &fileinfo{"/", fs.root}, nil
+		return &FileInfo{"/", fs.root}, nil
 	}
 	node, err := fs.fileStat(fs.cwd, name)
-	return &fileinfo{filepath.Base(name), node}, err
+	return &FileInfo{filepath.Base(name), node}, err
 }
 
 func (fs *FileSystem) Lstat(name string) (os.FileInfo, error) {
 	if name == "/" {
-		return &fileinfo{"/", fs.root}, nil
+		return &FileInfo{"/", fs.root}, nil
 	}
 	name = inode.Abs(fs.cwd, name)
 	node, err := fs.root.Resolve(strings.TrimLeft(name, "/"))
@@ -491,7 +492,7 @@ func (fs *FileSystem) Lstat(name string) (os.FileInfo, error) {
 		return nil, &os.PathError{Op: "remove", Path: name, Err: err}
 	}
 
-	return &fileinfo{filepath.Base(name), node}, nil
+	return &FileInfo{filepath.Base(name), node}, nil
 }
 
 func (fs *FileSystem) Lchown(name string, uid, gid int) error {

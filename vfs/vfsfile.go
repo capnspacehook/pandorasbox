@@ -74,9 +74,10 @@ func (f *File) Read(p []byte) (int, error) {
 		key *memguard.LockedBuffer
 	)
 
-	f.mtx.RLock()
-	if f.data.size != 0 {
+	if atomic.LoadInt64(&f.data.size) != 0 {
+		f.mtx.RLock()
 		key, err = f.data.key.Open()
+		f.mtx.RUnlock()
 		if err != nil {
 			return 0, err
 		}
@@ -85,6 +86,7 @@ func (f *File) Read(p []byte) (int, error) {
 	}
 
 	plaintext := make([]byte, f.data.size)
+	f.mtx.RLock()
 	_, err = core.Decrypt(f.data.ciphertext, key.Bytes(), plaintext)
 	key.Destroy()
 	f.mtx.RUnlock()
@@ -92,10 +94,10 @@ func (f *File) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	n := len(plaintext[f.offset:])
-	core.Copy(p, plaintext[f.offset:])
+	n := len(plaintext[atomic.LoadInt64(&f.offset):])
+	core.Copy(p, plaintext[atomic.LoadInt64(&f.offset):])
 	core.Wipe(plaintext)
-	f.offset += int64(n)
+	atomic.AddInt64(&f.offset, int64(n))
 
 	return n, nil
 }
@@ -118,8 +120,8 @@ func (f *File) Write(p []byte) (int, error) {
 		plaintext = make([]byte, f.data.size)
 	)
 
-	f.mtx.RLock()
-	if f.data.size != 0 {
+	if atomic.LoadInt64(&f.data.size) != 0 {
+		f.mtx.RLock()
 		key, err := f.data.key.Open()
 		if err != nil {
 			return 0, err
@@ -129,8 +131,9 @@ func (f *File) Write(p []byte) (int, error) {
 			return 0, err
 		}
 		key.Destroy()
+		f.mtx.RUnlock()
+
 	}
-	f.mtx.RUnlock()
 
 	data := plaintext
 	size := len(p) + int(f.offset)
@@ -191,7 +194,7 @@ func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
 }
 
 func (f *File) Stat() (os.FileInfo, error) {
-	return &fileinfo{filepath.Base(f.name), f.node}, nil
+	return &FileInfo{filepath.Base(f.name), f.node}, nil
 }
 
 func (f *File) Sync() error {
@@ -227,7 +230,7 @@ func (f *File) Readdir(n int) ([]os.FileInfo, error) {
 	}
 	infos := make([]os.FileInfo, n-f.diroffset)
 	for i, entry := range dirs[f.diroffset:n] {
-		infos[i] = &fileinfo{entry.Name, entry.Inode}
+		infos[i] = &FileInfo{entry.Name, entry.Inode}
 	}
 	f.diroffset += n
 	return infos, nil
@@ -324,31 +327,31 @@ func (f *File) WriteString(s string) (n int, err error) {
 	return f.Write([]byte(s))
 }
 
-type fileinfo struct {
+type FileInfo struct {
 	name string
 	node *inode.Inode
 }
 
-func (i *fileinfo) Name() string {
+func (i *FileInfo) Name() string {
 	return i.name
 }
 
-func (i *fileinfo) Size() int64 {
+func (i *FileInfo) Size() int64 {
 	return i.node.Size
 }
 
-func (i *fileinfo) ModTime() time.Time {
+func (i *FileInfo) ModTime() time.Time {
 	return i.node.Mtime
 }
 
-func (i *fileinfo) Mode() os.FileMode {
+func (i *FileInfo) Mode() os.FileMode {
 	return i.node.Mode
 }
 
-func (i *fileinfo) Sys() interface{} {
+func (i *FileInfo) Sys() interface{} {
 	return i.node
 }
 
-func (i *fileinfo) IsDir() bool {
+func (i *FileInfo) IsDir() bool {
 	return i.node.IsDir()
 }
