@@ -63,11 +63,11 @@ func (f *File) Read(p []byte) (int, error) {
 
 	var (
 		err error
-		buf *memguard.LockedBuffer
+		key *memguard.LockedBuffer
 	)
 
 	if f.data.Size() != 0 {
-		buf, err = f.data.key.Open()
+		key, err = f.data.key.Open()
 		if err != nil {
 			return 0, err
 		}
@@ -76,14 +76,15 @@ func (f *File) Read(p []byte) (int, error) {
 	}
 
 	plaintext := make([]byte, f.data.Size())
-	_, err = core.Decrypt(f.data.ciphertext, buf.Bytes(), plaintext)
-	buf.Destroy()
+	_, err = core.Decrypt(f.data.ciphertext, key.Bytes(), plaintext)
+	key.Destroy()
 	if err != nil {
 		return 0, err
 	}
 
 	n := len(plaintext[f.offset:])
-	core.Move(p, plaintext[f.offset:])
+	core.Copy(p, plaintext[f.offset:])
+	core.Wipe(plaintext)
 	f.offset += int64(n)
 
 	return n, nil
@@ -131,6 +132,7 @@ func (f *File) Write(p []byte) (int, error) {
 	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
 	f.data.ciphertext, err = core.Encrypt(data, newKey.Bytes())
 	f.data.key = newKey.Seal()
+	core.Wipe(data)
 	if err != nil {
 		return 0, err
 	}
@@ -262,6 +264,7 @@ func (f *File) Truncate(size int64) error {
 		newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
 		f.data.ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
 		f.data.key = newKey.Seal()
+		core.Wipe(plaintext)
 		if err != nil {
 			return err
 		}
@@ -271,8 +274,9 @@ func (f *File) Truncate(size int64) error {
 	data := make([]byte, int(size))
 	core.Move(data, plaintext)
 	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
-	f.data.ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
+	f.data.ciphertext, err = core.Encrypt(data, newKey.Bytes())
 	f.data.key = newKey.Seal()
+	core.Wipe(data)
 	if err != nil {
 		return err
 	}
