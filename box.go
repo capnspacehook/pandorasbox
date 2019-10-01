@@ -56,7 +56,7 @@ func (b *Box) Rename(oldpath, newpath string) error {
 	if oldPathVFS && newPathVFS {
 		return b.vfs.Rename(vfsOldPath, vfsNewPath)
 	} else if (oldPathVFS && !newPathVFS) || (!oldPathVFS && newPathVFS) {
-		return errors.New("oldpath and newpath must both either be a VFS path, or normal path")
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: errors.New("oldpath and newpath must both either be a VFS path, or normal path")}
 	}
 
 	return b.osfs.Rename(oldpath, newpath)
@@ -204,7 +204,7 @@ func (b *Box) Symlink(oldname, newname string) error {
 	if oldNameVFS && newNameVFS {
 		return b.vfs.Rename(vfsOldName, vfsNewName)
 	} else if (oldNameVFS && !newNameVFS) || (!oldNameVFS && newNameVFS) {
-		return errors.New("oldname and newname must both either be a VFS path, or normal path")
+		return &os.LinkError{Op: "symlink", Old: oldname, New: newname, Err: errors.New("oldname and newname must both either be a VFS path, or normal path")}
 	}
 
 	return b.osfs.Rename(oldname, newname)
