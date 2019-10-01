@@ -695,7 +695,7 @@ func TestStat(t *testing.T) {
 	if fi.IsDir() {
 		t.Errorf("Invalid IsDir")
 	}
-	if m := fi.Mode(); m != 0666 {
+	if m := fi.Mode(); m != fs.Umask&0666 {
 		t.Errorf("Invalid mode: %d", m)
 	}
 }
