@@ -336,7 +336,7 @@ func TestCreate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error creating file: %s", err)
 		}
-		if name := f.Name(); name != "/relFile" {
+		if name := f.Name(); name != "relFile" {
 			t.Errorf("Wrong name: %s", name)
 		}
 	}

@@ -204,6 +204,7 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 		node = fs.ino.New(fs.Umask & perm)
 		err := parent.Link(filename, node)
 		if err != nil {
+			fs.ino.SubIno()
 			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: err}
 		}
 		fs.data = append(fs.data, &sealedFile{})

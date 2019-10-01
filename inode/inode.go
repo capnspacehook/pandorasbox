@@ -63,6 +63,10 @@ func (n *Ino) New(mode os.FileMode) *Inode {
 	}
 }
 
+func (n *Ino) SubIno() {
+	atomic.AddUint64((*uint64)(unsafe.Pointer(n)), ^uint64(0))
+}
+
 func (n *Ino) NewDir(mode os.FileMode) *Inode {
 	dir := n.New(mode)
 	var err error
