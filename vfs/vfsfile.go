@@ -118,9 +118,7 @@ func (f *File) Write(p []byte) (int, error) {
 		plaintext = make([]byte, f.data.size)
 	)
 
-	f.mtx.Lock()
-	defer f.mtx.Unlock()
-
+	f.mtx.RLock()
 	if f.data.size != 0 {
 		key, err := f.data.key.Open()
 		if err != nil {
@@ -132,6 +130,7 @@ func (f *File) Write(p []byte) (int, error) {
 		}
 		key.Destroy()
 	}
+	f.mtx.RUnlock()
 
 	data := plaintext
 	size := len(p) + int(f.offset)
@@ -143,16 +142,20 @@ func (f *File) Write(p []byte) (int, error) {
 
 	core.Copy(data[int(f.offset):], p)
 	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
+
+	f.mtx.Lock()
 	f.data.ciphertext, err = core.Encrypt(data, newKey.Bytes())
 	f.data.key = newKey.Seal()
-	core.Wipe(data)
 	f.data.updateSize()
+	f.mtx.Unlock()
+
+	core.Wipe(data)
 	if err != nil {
 		return 0, err
 	}
 
 	n := len(p)
-	f.offset += int64(n)
+	atomic.AddInt64(&f.offset, int64(n))
 
 	return n, nil
 }
