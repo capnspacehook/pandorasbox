@@ -753,8 +753,8 @@ func TestRename(t *testing.T) {
 	}
 
 	// Overwrite existing file
-	if err := fs.Rename("/newdirectory/README.txt", "/README.txt"); err == nil {
-		t.Errorf("Expected error renaming file")
+	if err := fs.Rename("/newdirectory/README.txt", "/README.txt"); err != nil {
+		t.Errorf("Unexpected error renaming file")
 	}
 
 }
