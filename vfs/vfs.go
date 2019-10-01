@@ -231,6 +231,7 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 		newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
 		fs.data[i].ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
 		fs.data[i].key = newKey.Seal()
+		core.Wipe(plaintext)
 		if err != nil {
 			return err
 		}
@@ -240,8 +241,9 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 	data := make([]byte, int(size))
 	core.Move(data, plaintext)
 	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
-	fs.data[i].ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
+	fs.data[i].ciphertext, err = core.Encrypt(data, newKey.Bytes())
 	fs.data[i].key = newKey.Seal()
+	core.Wipe(data)
 	if err != nil {
 		return err
 	}
