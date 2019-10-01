@@ -26,12 +26,25 @@ func IsVFSPath(path string) bool {
 	return false
 }
 
+func MakeVFSPath(path string) string {
+	vfsPath := strings.Replace(path, "/", VFSPrefix, 1)
+	if vfsPath == path {
+		vfsPath = VFSPrefix + path
+	}
+
+	return vfsPath
+}
+
 func IsNotExist(err error) bool {
 	return os.IsNotExist(err)
 }
 
 func IsExist(err error) bool {
 	return os.IsExist(err)
+}
+
+func IsPermission(err error) bool {
+	return os.IsPermission(err)
 }
 
 func SameFile(fi1, fi2 os.FileInfo) bool {
