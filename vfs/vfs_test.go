@@ -589,6 +589,7 @@ func TestTruncateToLength(t *testing.T) {
 		{int64(len(dots)), false},
 		{int64(len(dots) + 1), false},
 	}
+
 	for _, param := range params {
 		fs := NewFS()
 		f, err := fs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDWR, 0666)
@@ -603,7 +604,7 @@ func TestTruncateToLength(t *testing.T) {
 		f.Close()
 
 		newSize := param.size
-		err = f.Truncate(newSize)
+		err = fs.Truncate("/readme.txt", newSize)
 		if param.err {
 			if err == nil {
 				t.Errorf("Error expected truncating file to length %d", newSize)

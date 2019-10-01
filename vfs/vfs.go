@@ -231,6 +231,10 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 }
 
 func (fs *FileSystem) Truncate(name string, size int64) error {
+	if size < 0 {
+		return &os.PathError{Op: "truncate", Path: name, Err: os.ErrClosed}
+	}
+
 	path := inode.Abs(fs.cwd, name)
 	child, err := fs.root.Resolve(path)
 	if err != nil {
