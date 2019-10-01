@@ -6,13 +6,17 @@ import (
 	"os"
 	filepath "path"
 	"sort"
-	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 // An Inode represents the basic metadata of a file.
 type Inode struct {
+	sync.RWMutex
+
 	Ino   uint64
 	Mode  os.FileMode
 	Nlink uint64
@@ -39,36 +43,16 @@ func (e *DirEntry) IsDir() bool {
 	return e.Inode.IsDir()
 }
 
-func (e *DirEntry) String() string {
-	nodeStr := "(nil)"
-	if e.Inode != nil {
-		nodeStr = fmt.Sprintf("{Ino:%d ...}", e.Inode.Ino)
-	}
-	return fmt.Sprintf("entry{%q, inode%s", e.Name, nodeStr)
-}
-
 type Directory []*DirEntry
 
 func (d Directory) Len() int           { return len(d) }
 func (d Directory) Swap(i, j int)      { d[i], d[j] = d[j], d[i] }
 func (d Directory) Less(i, j int) bool { return d[i].Name < d[j].Name }
 
-func (n *Inode) String() string {
-	if n == nil {
-		return "<nil>"
-	}
-
-	list := make([]string, len(n.Dir))
-	for i, e := range n.Dir {
-		list[i] = e.String()
-	}
-	return fmt.Sprintf("Inode{Ino:%d,Mode:%s,Nlink:%d}\n\t%s", n.Ino, n.Mode, n.Nlink, strings.Join(list, ",\n"))
-}
-
 type Ino uint64
 
 func (n *Ino) New(mode os.FileMode) *Inode {
-	*n++
+	atomic.AddUint64((*uint64)(unsafe.Pointer(n)), 1)
 	now := time.Now()
 	return &Inode{
 		Ino:   uint64(*n),
@@ -102,6 +86,9 @@ func (n *Inode) Link(name string, child *Inode) error {
 		return errors.New("not a directory")
 	}
 
+	n.Lock()
+	defer n.Unlock()
+
 	x := n.find(name)
 
 	entry := &DirEntry{name, child}
@@ -116,11 +103,13 @@ func (n *Inode) Link(name string, child *Inode) error {
 
 // Unlink - removes the directory entry (DirEntry).
 func (n *Inode) Unlink(name string) error {
-
 	// It is an error to unlink an Inode that is not a directory
 	if !n.IsDir() {
 		return errors.New("not a directory")
 	}
+
+	n.Lock()
+	defer n.Unlock()
 
 	x := n.find(name)
 
@@ -133,6 +122,8 @@ func (n *Inode) Unlink(name string) error {
 }
 
 func (n *Inode) UnlinkAll() {
+	n.Lock()
+
 	for _, e := range n.Dir {
 		if e.Name == ".." {
 			continue
@@ -141,10 +132,13 @@ func (n *Inode) UnlinkAll() {
 			e.Inode.countDown()
 			continue
 		}
+		n.Unlock()
 		e.Inode.UnlinkAll()
+		n.Lock()
 		e.Inode.countDown()
 	}
 	n.Dir = n.Dir[:0]
+	n.Unlock()
 }
 
 func (n *Inode) IsDir() bool {
@@ -152,7 +146,6 @@ func (n *Inode) IsDir() bool {
 }
 
 func (n *Inode) Rename(oldpath, newpath string) error {
-
 	dir, name := filepath.Split(oldpath)
 	dir = filepath.Clean(dir)
 
@@ -197,6 +190,9 @@ func (n *Inode) Rename(oldpath, newpath string) error {
 }
 
 func (n *Inode) Resolve(path string) (*Inode, error) {
+	n.RLock()
+	defer n.RUnlock()
+
 	name, trim := PopPath(path)
 	if name == "/" {
 		if trim == "" {
