@@ -1,7 +1,6 @@
 package osfs
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -10,16 +9,10 @@ import (
 )
 
 type FileSystem struct {
-	cwd string
 }
 
 func NewFS() (*FileSystem, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return nil, nil
-	}
-
-	return &FileSystem{dir}, nil
+	return &FileSystem{}, nil
 }
 
 func (fs *FileSystem) Separator() uint8 {
@@ -39,24 +32,12 @@ func (fs *FileSystem) isDir(name string) bool {
 	return info.IsDir()
 }
 
-func (fs *FileSystem) fixPath(name string) string {
-	if !filepath.IsAbs(name) {
-		name = filepath.Join(fs.cwd, name)
-	}
-	return name
-}
-
 func (fs *FileSystem) Chdir(name string) error {
-	name = fs.fixPath(name)
-	if !fs.isDir(name) {
-		return &os.PathError{Op: "chdir", Path: name, Err: errors.New("not a directory")}
-	}
-	fs.cwd = name
-	return nil
+	return os.Chdir(name)
 }
 
 func (fs *FileSystem) Getwd() (dir string, err error) {
-	return fs.cwd, nil
+	return os.Getwd()
 }
 
 func (fs *FileSystem) TempDir() string {
@@ -64,7 +45,7 @@ func (fs *FileSystem) TempDir() string {
 }
 
 func (fs *FileSystem) Open(name string) (absfs.File, error) {
-	f, err := os.Open(fs.fixPath(name))
+	f, err := os.Open(name)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +54,7 @@ func (fs *FileSystem) Open(name string) (absfs.File, error) {
 }
 
 func (fs *FileSystem) Create(name string) (absfs.File, error) {
-	f, err := os.Create(fs.fixPath(name))
+	f, err := os.Create(name)
 	if err != nil {
 		return nil, err
 	}
@@ -82,19 +63,19 @@ func (fs *FileSystem) Create(name string) (absfs.File, error) {
 }
 
 func (fs *FileSystem) Truncate(name string, size int64) error {
-	return os.Truncate(fs.fixPath(name), size)
+	return os.Truncate(name, size)
 }
 
 func (fs *FileSystem) Mkdir(name string, perm os.FileMode) error {
-	return os.Mkdir(fs.fixPath(name), perm)
+	return os.Mkdir(name, perm)
 }
 
 func (fs *FileSystem) MkdirAll(name string, perm os.FileMode) error {
-	return os.MkdirAll(fs.fixPath(name), perm)
+	return os.MkdirAll(name, perm)
 }
 
 func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
-	f, err := os.OpenFile(fs.fixPath(name), flag, perm)
+	f, err := os.OpenFile(name, flag, perm)
 	if err != nil {
 		return nil, err
 	}
@@ -103,54 +84,51 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 }
 
 func (fs *FileSystem) Remove(name string) error {
-	return os.Remove(fs.fixPath(name))
+	return os.Remove(name)
 }
 
 func (fs *FileSystem) Rename(oldpath, newpath string) error {
-	return os.Rename(fs.fixPath(oldpath), fs.fixPath(newpath))
+	return os.Rename(oldpath, newpath)
 }
 
 func (fs *FileSystem) RemoveAll(name string) error {
-	return os.RemoveAll(fs.fixPath(name))
+	return os.RemoveAll(name)
 }
 
 func (fs *FileSystem) Stat(name string) (os.FileInfo, error) {
-	return os.Stat(fs.fixPath(name))
+	return os.Stat(name)
 }
 
-//Chmod changes the mode of the named file to mode.
 func (fs *FileSystem) Chmod(name string, mode os.FileMode) error {
-	return os.Chmod(fs.fixPath(name), mode)
+	return os.Chmod(name, mode)
 }
 
-//Chtimes changes the access and modification times of the named file
 func (fs *FileSystem) Chtimes(name string, atime time.Time, mtime time.Time) error {
-	return os.Chtimes(fs.fixPath(name), atime, mtime)
+	return os.Chtimes(name, atime, mtime)
 }
 
-//Chown changes the owner and group ids of the named file
 func (fs *FileSystem) Chown(name string, uid, gid int) error {
-	return os.Chown(fs.fixPath(name), uid, gid)
+	return os.Chown(name, uid, gid)
 }
 
 func (fs *FileSystem) Lstat(name string) (os.FileInfo, error) {
-	return os.Lstat(fs.fixPath(name))
+	return os.Lstat(name)
 }
 
 // ess
 
 func (fs *FileSystem) Lchown(name string, uid, gid int) error {
-	return os.Lchown(fs.fixPath(name), uid, gid)
+	return os.Lchown(name, uid, gid)
 }
 
 func (fs *FileSystem) Readlink(name string) (string, error) {
-	return os.Readlink(fs.fixPath(name))
+	return os.Readlink(name)
 }
 
 func (fs *FileSystem) Symlink(oldname, newname string) error {
-	return os.Symlink(fs.fixPath(oldname), fs.fixPath(newname))
+	return os.Symlink(oldname, newname)
 }
 
 func (fs *FileSystem) Walk(path string, fn func(string, os.FileInfo, error) error) error {
-	return filepath.Walk(path, fn) //(filepath.WalkFunc)(fn))
+	return filepath.Walk(path, fn)
 }
