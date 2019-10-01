@@ -21,7 +21,7 @@ import (
 const keySize = 32
 
 type File struct {
-	sync.RWMutex
+	mtx sync.RWMutex
 
 	fs *FileSystem
 
@@ -74,7 +74,7 @@ func (f *File) Read(p []byte) (int, error) {
 		key *memguard.LockedBuffer
 	)
 
-	f.RLock()
+	f.mtx.RLock()
 	if f.data.size != 0 {
 		key, err = f.data.key.Open()
 		if err != nil {
@@ -87,7 +87,7 @@ func (f *File) Read(p []byte) (int, error) {
 	plaintext := make([]byte, f.data.size)
 	_, err = core.Decrypt(f.data.ciphertext, key.Bytes(), plaintext)
 	key.Destroy()
-	f.RUnlock()
+	f.mtx.RUnlock()
 	if err != nil {
 		return 0, err
 	}
@@ -118,8 +118,8 @@ func (f *File) Write(p []byte) (int, error) {
 		plaintext = make([]byte, f.data.size)
 	)
 
-	f.Lock()
-	defer f.Unlock()
+	f.mtx.Lock()
+	defer f.mtx.Unlock()
 
 	if f.data.size != 0 {
 		key, err := f.data.key.Open()
@@ -184,7 +184,7 @@ func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
 	if f.offset < 0 {
 		atomic.StoreInt64(&f.offset, 0)
 	}
-	return f.offset, nil
+	return atomic.LoadInt64(&f.offset), nil
 }
 
 func (f *File) Stat() (os.FileInfo, error) {
@@ -195,9 +195,9 @@ func (f *File) Sync() error {
 	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
 		return nil
 	}
-	f.fs.Lock()
+	f.fs.mtx.Lock()
 	f.fs.data[int(f.node.Ino)] = f.data
-	f.fs.Unlock()
+	f.fs.mtx.Unlock()
 	f.node.Size = atomic.LoadInt64(&f.data.size)
 
 	return nil
@@ -211,8 +211,8 @@ func (f *File) Readdir(n int) ([]os.FileInfo, error) {
 		return nil, errors.New("not a directory")
 	}
 
-	f.Lock()
-	defer f.Unlock()
+	f.mtx.Lock()
+	defer f.mtx.Unlock()
 
 	dirs := f.node.Dir
 	if f.diroffset >= len(dirs) {
@@ -239,8 +239,8 @@ func (f *File) Readdirnames(n int) ([]string, error) {
 		return list, errors.New("not a directory")
 	}
 
-	f.Lock()
-	defer f.Unlock()
+	f.mtx.Lock()
+	defer f.mtx.Unlock()
 
 	dirs := f.node.Dir
 	if f.diroffset >= len(dirs) {
@@ -265,8 +265,8 @@ func (f *File) Truncate(size int64) error {
 		return &os.PathError{Op: "truncate", Path: f.name, Err: os.ErrClosed}
 	}
 
-	f.Lock()
-	defer f.Unlock()
+	f.mtx.Lock()
+	defer f.mtx.Unlock()
 
 	var (
 		err       error

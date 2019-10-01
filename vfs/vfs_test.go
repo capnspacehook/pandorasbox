@@ -322,7 +322,7 @@ func TestCreate(t *testing.T) {
 		}
 	}
 
-	// Create file with unkown parent
+	// Create file with unknown parent
 	{
 		_, err := fs.OpenFile("/testfile/testfile", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 		if err == nil {

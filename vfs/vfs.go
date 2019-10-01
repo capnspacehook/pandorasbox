@@ -20,7 +20,7 @@ import (
 )
 
 type FileSystem struct {
-	sync.RWMutex
+	mtx sync.RWMutex
 
 	Umask   os.FileMode
 	Tempdir string
@@ -84,8 +84,8 @@ func (fs *FileSystem) Rename(oldpath, newpath string) error {
 }
 
 func (fs *FileSystem) Chdir(name string) (err error) {
-	fs.Lock()
-	defer fs.Unlock()
+	fs.mtx.Lock()
+	defer fs.mtx.Unlock()
 
 	if name == "/" {
 		fs.cwd = "/"
@@ -113,15 +113,15 @@ func (fs *FileSystem) Chdir(name string) (err error) {
 }
 
 func (fs *FileSystem) Getwd() (dir string, err error) {
-	fs.RLock()
-	defer fs.RUnlock()
+	fs.mtx.RLock()
+	defer fs.mtx.RUnlock()
 
 	return fs.cwd, nil
 }
 
 func (fs *FileSystem) TempDir() string {
-	fs.RLock()
-	defer fs.RUnlock()
+	fs.mtx.RLock()
+	defer fs.mtx.RUnlock()
 
 	return fs.Tempdir
 }
@@ -231,47 +231,43 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 }
 
 func (fs *FileSystem) Truncate(name string, size int64) error {
-	fs.Lock()
-	defer fs.Unlock()
-
 	path := inode.Abs(fs.cwd, name)
 	child, err := fs.root.Resolve(path)
 	if err != nil {
 		return err
 	}
+	fs.mtx.RLock()
+	file := fs.data[child.Ino]
+	fs.mtx.RUnlock()
 
-	var (
-		i         = int(child.Ino)
-		plaintext []byte
-	)
-
-	if fs.data[i].size != 0 {
-		fs.data[i].f.RLock()
-		key, err := fs.data[i].key.Open()
+	var plaintext []byte
+	if file.size != 0 {
+		file.f.mtx.RLock()
+		key, err := file.key.Open()
 		if err != nil {
 			return err
 		}
-		plaintext = make([]byte, fs.data[i].size)
-		_, err = core.Decrypt(fs.data[i].ciphertext, key.Bytes(), plaintext)
+		plaintext = make([]byte, file.size)
+		_, err = core.Decrypt(file.ciphertext, key.Bytes(), plaintext)
 		if err != nil {
 			return err
 		}
 		key.Destroy()
-		fs.data[i].f.RUnlock()
+		file.f.mtx.RUnlock()
 	} else if size == 0 { // data is already nil, no-op
 		return nil
 	}
 
 	// TODO: should this be copied in constant time?
-	if size <= fs.data[i].size {
+	if size <= file.size {
 		plaintext = plaintext[:int(size)]
 		newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
 
-		fs.data[i].f.Lock()
-		fs.data[i].ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
-		fs.data[i].key = newKey.Seal()
-		fs.data[i].updateSize()
-		fs.data[i].f.Unlock()
+		file.f.mtx.Lock()
+		file.ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
+		file.key = newKey.Seal()
+		file.updateSize()
+		file.f.mtx.Unlock()
 
 		core.Wipe(plaintext)
 		if err != nil {
@@ -285,11 +281,11 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 
 	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
 
-	fs.data[i].f.Lock()
-	fs.data[i].ciphertext, err = core.Encrypt(data, newKey.Bytes())
-	fs.data[i].key = newKey.Seal()
-	fs.data[i].updateSize()
-	fs.data[i].f.Unlock()
+	file.f.mtx.Lock()
+	file.ciphertext, err = core.Encrypt(data, newKey.Bytes())
+	file.key = newKey.Seal()
+	file.updateSize()
+	file.f.mtx.Unlock()
 
 	core.Wipe(data)
 	if err != nil {
@@ -300,8 +296,8 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 }
 
 func (fs *FileSystem) Mkdir(name string, perm os.FileMode) error {
-	fs.Lock()
-	defer fs.Unlock()
+	fs.mtx.Lock()
+	defer fs.mtx.Unlock()
 
 	wd := fs.root
 	abs := name
@@ -333,9 +329,9 @@ func (fs *FileSystem) Mkdir(name string, perm os.FileMode) error {
 }
 
 func (fs *FileSystem) MkdirAll(name string, perm os.FileMode) error {
-	fs.RLock()
+	fs.mtx.RLock()
 	name = inode.Abs(fs.cwd, name)
-	fs.RUnlock()
+	fs.mtx.RUnlock()
 	path := ""
 	for _, p := range strings.Split(name, string(fs.Separator())) {
 		if p == "" {
@@ -523,8 +519,8 @@ func (fs *FileSystem) Readlink(name string) (string, error) {
 		ino = node.Ino
 	}
 
-	fs.RLock()
-	defer fs.Unlock()
+	fs.mtx.RLock()
+	defer fs.mtx.Unlock()
 
 	return fs.symlinks[ino], nil
 }
@@ -548,8 +544,8 @@ func (fs *FileSystem) Symlink(oldname, newname string) error {
 		return &os.PathError{Op: "symlink", Path: oldname, Err: syscall.ENOENT}
 	}
 
-	fs.Lock()
-	defer fs.Unlock()
+	fs.mtx.Lock()
+	defer fs.mtx.Unlock()
 
 	if exists {
 		newNode.Mode = oldNode.Mode | os.ModeSymlink
