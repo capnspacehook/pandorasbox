@@ -463,7 +463,10 @@ func (fs *FileSystem) Chmod(name string, mode os.FileMode) error {
 // TODO: Avoid cyclical links
 func (fs *FileSystem) fileStat(cwd, name string) (*inode.Inode, error) {
 	name = inode.Abs(cwd, name)
-	node, err := fs.root.Resolve(strings.TrimLeft(name, "/"))
+	if name != "/" {
+		name = strings.TrimLeft(name, "/")
+	}
+	node, err := fs.root.Resolve(name)
 	if err != nil {
 		return nil, &os.PathError{Op: "stat", Path: name, Err: err}
 	}
