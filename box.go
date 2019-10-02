@@ -207,7 +207,7 @@ func (b *Box) Symlink(oldname, newname string) error {
 		return &os.LinkError{Op: "symlink", Old: oldname, New: newname, Err: errors.New("oldname and newname must both either be a VFS path, or normal path")}
 	}
 
-	return b.osfs.Rename(oldname, newname)
+	return b.osfs.Symlink(oldname, newname)
 }
 
 // io/ioutil methods
