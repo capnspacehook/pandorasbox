@@ -225,7 +225,7 @@ func (f *File) Readdir(n int) ([]os.FileInfo, error) {
 		return nil, io.EOF
 	}
 	if n < 1 {
-		n = len(dirs)
+		n = len(dirs) - 2
 		f.diroffset = 0
 	}
 	infos := make([]os.FileInfo, n-f.diroffset)
@@ -253,7 +253,7 @@ func (f *File) Readdirnames(n int) ([]string, error) {
 		return list, io.EOF
 	}
 	if n < 1 {
-		n = len(dirs)
+		n = len(dirs) - 2
 	}
 	list = make([]string, n-f.diroffset)
 	for i, entry := range dirs[f.diroffset:n] {
