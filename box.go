@@ -94,40 +94,48 @@ func (b *Box) Chown(name string, uid, gid int) error {
 	return b.osfs.Chown(name, uid, gid)
 }
 
-func (b *Box) Separator(vfs bool) uint8 {
-	if vfs {
+func (b *Box) Separator(vfsMode bool) uint8 {
+	if vfsMode {
 		return b.vfs.Separator()
 	}
 
 	return b.osfs.Separator()
 }
 
-func (b *Box) ListSeparator(vfs bool) uint8 {
-	if vfs {
+func (b *Box) ListSeparator(vfsMode bool) uint8 {
+	if vfsMode {
 		return b.vfs.ListSeparator()
 	}
 
 	return b.osfs.ListSeparator()
 }
 
-func (b *Box) Chdir(dir string, vfs bool) error {
-	if vfs {
+func (b *Box) IsPathSeparator(c uint8, vfsMode bool) bool {
+	if vfsMode {
+		return vfs.IsPathSeparator(c)
+	}
+
+	return osfs.IsPathSeparator(c)
+}
+
+func (b *Box) Chdir(dir string, vfsMode bool) error {
+	if vfsMode {
 		return b.vfs.Chdir(dir)
 	}
 
 	return b.osfs.Chdir(dir)
 }
 
-func (b *Box) Getwd(vfs bool) (string, error) {
-	if vfs {
+func (b *Box) Getwd(vfsMode bool) (string, error) {
+	if vfsMode {
 		return b.vfs.Getwd()
 	}
 
 	return b.osfs.Getwd()
 }
 
-func (b *Box) GetTempDir(vfs bool) string {
-	if vfs {
+func (b *Box) GetTempDir(vfsMode bool) string {
+	if vfsMode {
 		return b.vfs.TempDir()
 	}
 
