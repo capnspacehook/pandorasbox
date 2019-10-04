@@ -54,6 +54,10 @@ func ListSeparator(vfs bool) uint8 {
 	return box.ListSeparator(vfs)
 }
 
+func IsPathSeparator(c uint8, vfs bool) bool {
+	return box.IsPathSeparator(c, vfs)
+}
+
 func Chdir(dir string, vfs bool) error {
 	return box.Chdir(dir, vfs)
 }
