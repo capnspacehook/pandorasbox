@@ -2,7 +2,6 @@ package pandorasbox
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/capnspacehook/pandorasbox/osfs"
@@ -69,51 +68,4 @@ func SameFile(fi1, fi2 os.FileInfo) bool {
 	} else {
 		return osfs.SameFile(fi1, fi2)
 	}
-}
-
-func Clean(path string) string {
-	if vfsPath, ok := ConvertVFSPath(path); ok {
-		path = vfsPath
-		return MakeVFSPath(filepath.Clean(path))
-	}
-
-	return filepath.Join(path)
-}
-
-func Split(path string) (string, string) {
-	if vfsPath, ok := ConvertVFSPath(path); ok {
-		path = vfsPath
-		dir, file := filepath.Split(path)
-		dir = MakeVFSPath(dir)
-		return dir, file
-	}
-
-	return filepath.Split(path)
-}
-
-func Join(elem ...string) string {
-	if vfsPath, ok := ConvertVFSPath(elem[0]); ok {
-		elem[0] = vfsPath
-		return MakeVFSPath(filepath.Join(elem...))
-	}
-
-	return filepath.Join(elem...)
-}
-
-func Base(path string) string {
-	if vfsPath, ok := ConvertVFSPath(path); ok {
-		path = vfsPath
-		return MakeVFSPath(filepath.Base(path))
-	}
-
-	return filepath.Base(path)
-}
-
-func Dir(path string) string {
-	if vfsPath, ok := ConvertVFSPath(path); ok {
-		path = vfsPath
-		return MakeVFSPath(filepath.Dir(path))
-	}
-
-	return filepath.Dir(path)
 }

@@ -3,8 +3,7 @@ package vfs
 import (
 	"errors"
 	"os"
-	filepath "path" // force forward slash separators on all OSs.
-	pathfilepath "path/filepath"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -66,6 +65,17 @@ func (fs *FileSystem) ListSeparator() uint8 {
 	return PathListSeparator
 }
 
+func (fs *FileSystem) Abs(path string) (string, error) {
+	if strings.HasPrefix(path, string(PathSeparator)) {
+		return Clean(path), nil
+	}
+	wd, err := fs.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return Join(wd, path), nil
+}
+
 func (fs *FileSystem) Rename(oldpath, newpath string) error {
 	linkErr := &os.LinkError{
 		Op:  "rename",
@@ -77,12 +87,12 @@ func (fs *FileSystem) Rename(oldpath, newpath string) error {
 		return linkErr
 	}
 
-	if !filepath.IsAbs(oldpath) {
-		oldpath = filepath.Join(fs.cwd, oldpath)
+	if !IsAbs(oldpath) {
+		oldpath = Join(fs.cwd, oldpath)
 	}
 
-	if !filepath.IsAbs(newpath) {
-		newpath = filepath.Join(fs.cwd, newpath)
+	if !IsAbs(newpath) {
+		newpath = Join(fs.cwd, newpath)
 	}
 	err := fs.root.Rename(oldpath, newpath)
 	if err != nil {
@@ -103,8 +113,8 @@ func (fs *FileSystem) Chdir(name string) (err error) {
 	}
 	wd := fs.root
 	cwd := name
-	if !filepath.IsAbs(name) {
-		cwd = filepath.Join(fs.cwd, name)
+	if !IsAbs(name) {
+		cwd = Join(fs.cwd, name)
 		wd = fs.dir
 	}
 
@@ -163,7 +173,7 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 	}
 
 	wd := fs.root
-	if !filepath.IsAbs(name) {
+	if !IsAbs(name) {
 		wd = fs.dir
 	}
 	var exists bool
@@ -172,8 +182,8 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 		exists = true
 	}
 
-	dir, filename := filepath.Split(name)
-	dir = filepath.Clean(dir)
+	dir, filename := Split(name)
+	dir = Clean(dir)
 	parent, err := wd.Resolve(dir)
 	if err != nil {
 		return nil, err
@@ -314,8 +324,8 @@ func (fs *FileSystem) Mkdir(name string, perm os.FileMode) error {
 
 	wd := fs.root
 	abs := name
-	if !filepath.IsAbs(abs) {
-		abs = filepath.Join(fs.cwd, abs)
+	if !IsAbs(abs) {
+		abs = Join(fs.cwd, abs)
 		wd = fs.dir
 	}
 	_, err := wd.Resolve(name)
@@ -324,8 +334,8 @@ func (fs *FileSystem) Mkdir(name string, perm os.FileMode) error {
 	}
 
 	parent := fs.root
-	dir, filename := filepath.Split(abs)
-	dir = filepath.Clean(dir)
+	dir, filename := Split(abs)
+	dir = Clean(dir)
 	if dir != "/" {
 		parent, err = fs.root.Resolve(strings.TrimLeft(dir, "/"))
 		if err != nil {
@@ -350,7 +360,7 @@ func (fs *FileSystem) MkdirAll(name string, perm os.FileMode) error {
 		if p == "" {
 			p = "/"
 		}
-		path = filepath.Join(path, p)
+		path = Join(path, p)
 		fs.Mkdir(path, perm)
 	}
 
@@ -360,8 +370,8 @@ func (fs *FileSystem) MkdirAll(name string, perm os.FileMode) error {
 func (fs *FileSystem) Remove(name string) (err error) {
 	wd := fs.root
 	abs := name
-	if !filepath.IsAbs(abs) {
-		abs = filepath.Join(fs.cwd, abs)
+	if !IsAbs(abs) {
+		abs = Join(fs.cwd, abs)
 		wd = fs.dir
 	}
 	child, err := wd.Resolve(name)
@@ -376,8 +386,8 @@ func (fs *FileSystem) Remove(name string) (err error) {
 	}
 
 	parent := fs.root
-	dir, filename := filepath.Split(abs)
-	dir = filepath.Clean(dir)
+	dir, filename := Split(abs)
+	dir = Clean(dir)
 	if dir != "/" {
 		parent, err = fs.root.Resolve(strings.TrimLeft(dir, "/"))
 		if err != nil {
@@ -391,8 +401,8 @@ func (fs *FileSystem) Remove(name string) (err error) {
 func (fs *FileSystem) RemoveAll(name string) error {
 	wd := fs.root
 	abs := name
-	if !filepath.IsAbs(abs) {
-		abs = filepath.Join(fs.cwd, abs)
+	if !IsAbs(abs) {
+		abs = Join(fs.cwd, abs)
 		wd = fs.dir
 	}
 	child, err := wd.Resolve(name)
@@ -401,8 +411,8 @@ func (fs *FileSystem) RemoveAll(name string) error {
 	}
 
 	parent := fs.root
-	dir, filename := filepath.Split(abs)
-	dir = filepath.Clean(dir)
+	dir, filename := Split(abs)
+	dir = Clean(dir)
 	if dir != "/" {
 		parent, err = fs.root.Resolve(strings.TrimLeft(dir, "/"))
 		if err != nil {
@@ -483,7 +493,7 @@ func (fs *FileSystem) fileStat(cwd, name string) (*inode.Inode, error) {
 	if node.Mode&os.ModeSymlink == 0 {
 		return node, nil
 	}
-	return fs.fileStat(filepath.Dir(name), fs.symlinks[node.Ino])
+	return fs.fileStat(Dir(name), fs.symlinks[node.Ino])
 }
 
 func (fs *FileSystem) Stat(name string) (os.FileInfo, error) {
@@ -491,7 +501,7 @@ func (fs *FileSystem) Stat(name string) (os.FileInfo, error) {
 		return &FileInfo{"/", fs.root}, nil
 	}
 	node, err := fs.fileStat(fs.cwd, name)
-	return &FileInfo{filepath.Base(name), node}, err
+	return &FileInfo{Base(name), node}, err
 }
 
 func (fs *FileSystem) Lstat(name string) (os.FileInfo, error) {
@@ -504,7 +514,7 @@ func (fs *FileSystem) Lstat(name string) (os.FileInfo, error) {
 		return nil, &os.PathError{Op: "remove", Path: name, Err: err}
 	}
 
-	return &FileInfo{filepath.Base(name), node}, nil
+	return &FileInfo{Base(name), node}, nil
 }
 
 func (fs *FileSystem) Lchown(name string, uid, gid int) error {
@@ -544,7 +554,7 @@ func (fs *FileSystem) Readlink(name string) (string, error) {
 
 func (fs *FileSystem) Symlink(oldname, newname string) error {
 	wd := fs.root
-	if !filepath.IsAbs(newname) {
+	if !IsAbs(newname) {
 		wd = fs.dir
 	}
 	var exists bool
@@ -570,8 +580,8 @@ func (fs *FileSystem) Symlink(oldname, newname string) error {
 		return nil
 	}
 
-	dir, filename := filepath.Split(newname)
-	dir = filepath.Clean(dir)
+	dir, filename := Split(newname)
+	dir = Clean(dir)
 	parent, err := wd.Resolve(dir)
 	if err != nil {
 		return err
@@ -587,7 +597,7 @@ func (fs *FileSystem) Symlink(oldname, newname string) error {
 	return nil
 }
 
-func (fs *FileSystem) Walk(name string, fn pathfilepath.WalkFunc) error {
+func (fs *FileSystem) Walk(name string, fn filepath.WalkFunc) error {
 	var stack []string
 	push := func(path string) {
 		stack = append(stack, path)
@@ -623,7 +633,7 @@ func (fs *FileSystem) Walk(name string, fn pathfilepath.WalkFunc) error {
 				if p == ".." || p == "." {
 					continue
 				}
-				push(filepath.Join(path, p))
+				push(Join(path, p))
 			}
 		}
 
