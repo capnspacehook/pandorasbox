@@ -28,7 +28,7 @@ func ExampleReadAll() {
 }
 
 func ExampleReadDir() {
-	fs, _ := osfs.NewFS()
+	fs := osfs.NewFS()
 
 	files, err := ReadDir(fs, ".")
 	if err != nil {
@@ -41,7 +41,7 @@ func ExampleReadDir() {
 }
 
 func ExampleTempDir() {
-	fs, _ := osfs.NewFS()
+	fs := osfs.NewFS()
 	content := []byte("temporary file's content")
 	dir, err := TempDir(fs, "", "example")
 	if err != nil {
@@ -57,7 +57,7 @@ func ExampleTempDir() {
 }
 
 func ExampleTempFile() {
-	fs, _ := osfs.NewFS()
+	fs := osfs.NewFS()
 	content := []byte("temporary file's content")
 	tmpfile, err := TempFile(fs, "", "example")
 	if err != nil {
@@ -75,7 +75,7 @@ func ExampleTempFile() {
 }
 
 func ExampleReadFile() {
-	fs, _ := osfs.NewFS()
+	fs := osfs.NewFS()
 
 	content, err := ReadFile(fs, "testdata/hello")
 	if err != nil {

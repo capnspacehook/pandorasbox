@@ -25,7 +25,7 @@ func checkSize(t *testing.T, fs absfs.FileSystem, path string, size int64) {
 }
 
 func setup(t *testing.T) absfs.FileSystem {
-	fs, _ := vfs.NewFS()
+	fs := vfs.NewFS()
 	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if path == "." {
 			return nil
