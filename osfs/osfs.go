@@ -8,6 +8,10 @@ import (
 	"github.com/capnspacehook/pandorasbox/absfs"
 )
 
+func IsPathSeparator(c uint8) bool {
+	return os.IsPathSeparator(c)
+}
+
 type FileSystem struct {
 }
 

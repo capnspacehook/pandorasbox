@@ -19,6 +19,15 @@ import (
 	"github.com/capnspacehook/pandorasbox/inode"
 )
 
+const (
+	PathSeparator     = '/'
+	PathListSeparator = ':'
+)
+
+func IsPathSeparator(c uint8) bool {
+	return PathSeparator == c
+}
+
 type FileSystem struct {
 	mtx sync.RWMutex
 
@@ -50,11 +59,11 @@ func NewFS() *FileSystem {
 }
 
 func (fs *FileSystem) Separator() uint8 {
-	return '/'
+	return PathSeparator
 }
 
 func (fs *FileSystem) ListSeparator() uint8 {
-	return ':'
+	return PathListSeparator
 }
 
 func (fs *FileSystem) Rename(oldpath, newpath string) error {
