@@ -1,6 +1,7 @@
 package vfs
 
 import (
+	"errors"
 	"strings"
 )
 
@@ -165,4 +166,68 @@ func Dir(path string) string {
 	dir := Clean(path[:i+1])
 
 	return dir
+}
+
+func Rel(basepath, targpath string) (string, error) {
+	base := Clean(basepath)
+	targ := Clean(targpath)
+	if targ == base {
+		return ".", nil
+	}
+	if base == "." {
+		base = ""
+	}
+	// Can't use IsAbs - `\a` and `a` are both relative in Windows.
+	baseSlashed := len(base) > 0 && base[0] == PathSeparator
+	targSlashed := len(targ) > 0 && targ[0] == PathSeparator
+	if baseSlashed != targSlashed {
+		return "", errors.New("Rel: can't make " + targpath + " relative to " + basepath)
+	}
+	// Position base[b0:bi] and targ[t0:ti] at the first differing elements.
+	bl := len(base)
+	tl := len(targ)
+	var b0, bi, t0, ti int
+	for {
+		for bi < bl && base[bi] != PathSeparator {
+			bi++
+		}
+		for ti < tl && targ[ti] != PathSeparator {
+			ti++
+		}
+		if targ[t0:ti] != base[b0:bi] {
+			break
+		}
+		if bi < bl {
+			bi++
+		}
+		if ti < tl {
+			ti++
+		}
+		b0 = bi
+		t0 = ti
+	}
+	if base[b0:bi] == ".." {
+		return "", errors.New("Rel: can't make " + targpath + " relative to " + basepath)
+	}
+	if b0 != bl {
+		// Base elements left. Must go up before going down.
+		seps := strings.Count(base[b0:bl], string(PathSeparator))
+		size := 2 + seps*3
+		if tl != t0 {
+			size += 1 + tl - t0
+		}
+		buf := make([]byte, size)
+		n := copy(buf, "..")
+		for i := 0; i < seps; i++ {
+			buf[n] = PathSeparator
+			copy(buf[n+1:], "..")
+			n += 3
+		}
+		if t0 != tl {
+			buf[n] = PathSeparator
+			copy(buf[n+1:], targ[t0:])
+		}
+		return string(buf), nil
+	}
+	return targ[t0:], nil
 }

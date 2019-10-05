@@ -764,25 +764,9 @@ var reltests = []RelTests{
 	{"/a", "a", "err"},
 }
 
-var winreltests = []RelTests{
-	{`C:a\b\c`, `C:a/b/d`, `..\d`},
-	{`C:\`, `D:\`, `err`},
-	{`C:`, `D:`, `err`},
-	{`C:\Projects`, `c:\projects\src`, `src`},
-	{`C:\Projects`, `c:\projects`, `.`},
-	{`C:\Projects\a\..`, `c:\projects`, `.`},
-}
-
 func TestRel(t *testing.T) {
-	tests := append([]RelTests{}, reltests...)
-	if runtime.GOOS == "windows" {
-		for i := range tests {
-			tests[i].want = filepath.FromSlash(tests[i].want)
-		}
-		tests = append(tests, winreltests...)
-	}
-	for _, test := range tests {
-		got, err := filepath.Rel(test.root, test.path)
+	for _, test := range reltests {
+		got, err := Rel(test.root, test.path)
 		if test.want == "err" {
 			if err == nil {
 				t.Errorf("Rel(%q, %q)=%q, want error", test.root, test.path, got)
@@ -794,47 +778,6 @@ func TestRel(t *testing.T) {
 		}
 		if got != test.want {
 			t.Errorf("Rel(%q, %q)=%q, want %q", test.root, test.path, got, test.want)
-		}
-	}
-}
-
-type VolumeNameTest struct {
-	path string
-	vol  string
-}
-
-var volumenametests = []VolumeNameTest{
-	{`c:/foo/bar`, `c:`},
-	{`c:`, `c:`},
-	{`2:`, ``},
-	{``, ``},
-	{`\\\host`, ``},
-	{`\\\host\`, ``},
-	{`\\\host\share`, ``},
-	{`\\\host\\share`, ``},
-	{`\\host`, ``},
-	{`//host`, ``},
-	{`\\host\`, ``},
-	{`//host/`, ``},
-	{`\\host\share`, `\\host\share`},
-	{`//host/share`, `//host/share`},
-	{`\\host\share\`, `\\host\share`},
-	{`//host/share/`, `//host/share`},
-	{`\\host\share\foo`, `\\host\share`},
-	{`//host/share/foo`, `//host/share`},
-	{`\\host\share\\foo\\\bar\\\\baz`, `\\host\share`},
-	{`//host/share//foo///bar////baz`, `//host/share`},
-	{`\\host\share\foo\..\bar`, `\\host\share`},
-	{`//host/share/foo/../bar`, `//host/share`},
-}
-
-func TestVolumeName(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		return
-	}
-	for _, v := range volumenametests {
-		if vol := filepath.VolumeName(v.path); vol != v.vol {
-			t.Errorf("VolumeName(%q)=%q, want %q", v.path, vol, v.vol)
 		}
 	}
 }

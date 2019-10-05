@@ -1,6 +1,7 @@
 package pandorasbox
 
 import (
+	"errors"
 	"path/filepath"
 
 	"github.com/capnspacehook/pandorasbox/vfs"
@@ -68,4 +69,17 @@ func Dir(path string) string {
 	}
 
 	return filepath.Dir(path)
+}
+
+func Rel(basepath, targpath string) (string, error) {
+	vfsBasepath, basepathVfs := ConvertVFSPath(basepath)
+	vfsTargpath, targpathVfs := ConvertVFSPath(targpath)
+
+	if (basepathVfs && !targpathVfs) || (!basepathVfs && targpathVfs) {
+		return "", errors.New("basepath and targpath must both be a VFS path")
+	} else if basepathVfs && targpathVfs {
+		return vfs.Rel(vfsBasepath, vfsTargpath)
+	}
+
+	return filepath.Rel(basepath, targpath)
 }
