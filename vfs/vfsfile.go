@@ -94,9 +94,16 @@ func (f *File) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	n := len(plaintext[atomic.LoadInt64(&f.offset):])
-	core.Copy(p, plaintext[atomic.LoadInt64(&f.offset):])
+	offset := int(atomic.LoadInt64(&f.offset))
+	core.Copy(p, plaintext[offset:])
 	core.Wipe(plaintext)
+
+	var n int
+	if len(p) < len(plaintext[offset:]) {
+		n = len(p)
+	} else {
+		n = len(plaintext[offset:])
+	}
 	atomic.AddInt64(&f.offset, int64(n))
 
 	return n, nil
@@ -136,28 +143,34 @@ func (f *File) Write(p []byte) (int, error) {
 	}
 
 	data := plaintext
-	size := len(p) + int(f.offset)
+	offset := int(atomic.LoadInt64(&f.offset))
+	size := len(p) + offset
 	if int64(size) > f.data.size {
 		data = make([]byte, size)
 		core.Copy(data, plaintext)
 	}
 	core.Wipe(plaintext)
 
-	core.Copy(data[int(f.offset):], p)
+	core.Copy(data[offset:], p)
 	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
 
 	f.mtx.Lock()
 	f.data.ciphertext, err = core.Encrypt(data, newKey.Bytes())
 	f.data.key = newKey.Seal()
 	f.data.updateSize()
+	core.Wipe(data)
 	f.mtx.Unlock()
 
-	core.Wipe(data)
 	if err != nil {
 		return 0, err
 	}
 
-	n := len(p)
+	var n int
+	if len(p) < len(data[offset:]) {
+		n = len(p)
+	} else {
+		n = len(data[offset:])
+	}
 	atomic.AddInt64(&f.offset, int64(n))
 
 	return n, nil
