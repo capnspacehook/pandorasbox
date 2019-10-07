@@ -8,6 +8,10 @@ import (
 	"github.com/capnspacehook/pandorasbox/ioutil"
 )
 
+func OSAbs(path string) (string, error) {
+	return box.osfs.Abs(path)
+}
+
 func OSOpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
 	return box.osfs.OpenFile(name, flag, perm)
 }

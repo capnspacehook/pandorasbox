@@ -27,13 +27,8 @@ func (fs *FileSystem) ListSeparator() uint8 {
 	return filepath.ListSeparator
 }
 
-func (fs *FileSystem) isDir(name string) bool {
-	info, err := os.Stat(name)
-	if err != nil {
-		return false
-	}
-
-	return info.IsDir()
+func (fs *FileSystem) Abs(path string) (string, error) {
+	return filepath.Abs(path)
 }
 
 func (fs *FileSystem) Chdir(name string) error {

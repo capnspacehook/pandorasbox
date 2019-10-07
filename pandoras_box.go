@@ -14,6 +14,10 @@ func InitGlobalBox() {
 	box = NewBox()
 }
 
+func Abs(path string) (string, error) {
+	return box.Abs(path)
+}
+
 func OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
 	return box.OpenFile(name, flag, perm)
 }

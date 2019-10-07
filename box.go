@@ -26,6 +26,18 @@ func NewBox() *Box {
 	return box
 }
 
+func (b *Box) Abs(path string) (string, error) {
+	if vfsPath, ok := ConvertVFSPath(path); ok {
+		absPath, err := b.vfs.Abs(vfsPath)
+		if err != nil {
+			return "", err
+		}
+		return MakeVFSPath(absPath), nil
+	}
+
+	return b.osfs.Abs(path)
+}
+
 func (b *Box) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
 	if vfsName, ok := ConvertVFSPath(name); ok {
 		return b.vfs.OpenFile(vfsName, flag, perm)
