@@ -6,10 +6,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/capnspacehook/pandorasbox/absfs"
 	"github.com/capnspacehook/pandorasbox/fstesting"
 	"github.com/capnspacehook/pandorasbox/ioutil"
 )
@@ -443,6 +445,54 @@ func TestRemove(t *testing.T) {
 	}*/
 }
 
+// Read with length 0 should not return EOF.
+func TestRead0(t *testing.T) {
+	fs := NewFS()
+	filename := "testfile"
+	f, err := fs.Create(filename)
+	if err != nil {
+		t.Fatal("open failed:", err)
+	}
+	if _, err = f.WriteString(abc); err != nil {
+		t.Fatal("writing failed:", err)
+	}
+	defer f.Close()
+
+	b := make([]byte, 0)
+	n, err := f.Read(b)
+	if n != 0 || err != nil {
+		t.Errorf("Read(0) = %d, %v, want 0, nil", n, err)
+	}
+	b = make([]byte, 100)
+	n, err = f.ReadAt(b, 0)
+	if n <= 0 || err != nil {
+		t.Errorf("Read(100) = %d, %v, want >0, nil", n, err)
+	}
+}
+
+// Reading a closed file should return ErrClosed error
+func TestReadClosed(t *testing.T) {
+	fs := NewFS()
+	filename := "testfile"
+	file, err := fs.Create(filename)
+	if err != nil {
+		t.Fatal("open failed:", err)
+	}
+	file.Close() // close immediately
+
+	b := make([]byte, 100)
+	_, err = file.Read(b)
+
+	e, ok := err.(*os.PathError)
+	if !ok {
+		t.Fatalf("Read: %T(%v), want PathError", e, e)
+	}
+
+	if e.Err != os.ErrClosed {
+		t.Errorf("Read: %v, want PathError(ErrClosed)", e)
+	}
+}
+
 func TestReadWrite(t *testing.T) {
 	fs := NewFS()
 	f, err := fs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDWR, 0666)
@@ -701,6 +751,92 @@ func TestStat(t *testing.T) {
 	}
 }
 
+func TestStatError(t *testing.T) {
+	fs := NewFS()
+	path := "no-such-file"
+
+	fi, err := fs.Stat(path)
+	if err == nil {
+		t.Fatal("got nil, want error")
+	}
+	if fi != nil {
+		t.Errorf("got %v, want nil", fi)
+	}
+	if perr, ok := err.(*os.PathError); !ok {
+		t.Errorf("got %T, want %T", err, perr)
+	}
+
+	link := "symlink"
+	err = fs.Symlink(path, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fi, err = fs.Stat(link)
+	if err == nil {
+		t.Fatal("got nil, want error")
+	}
+	if fi != nil {
+		t.Errorf("got %v, want nil", fi)
+	}
+	if perr, ok := err.(*os.PathError); !ok {
+		t.Errorf("got %T, want %T", err, perr)
+	}
+}
+
+func TestFstat(t *testing.T) {
+	fs := NewFS()
+	filename := "testfile"
+	file, err := fs.Create(filename)
+	if err != nil {
+		t.Fatal("open failed:", err)
+	}
+	if _, err = file.WriteString(abc); err != nil {
+		t.Fatal("writing failed:", err)
+	}
+	if err = file.Sync(); err != nil {
+		t.Fatal("syncing failed:", err)
+	}
+	defer file.Close()
+
+	dir, err := file.Stat()
+	if err != nil {
+		t.Fatal("fstat failed:", err)
+	}
+	if filename != dir.Name() {
+		t.Error("name should be ", filename, "; is", dir.Name())
+	}
+	filesize := int64(len(abc))
+	if dir.Size() != filesize {
+		t.Error("size should be", filesize, "; is", dir.Size())
+	}
+}
+
+func TestLstat(t *testing.T) {
+	fs := NewFS()
+	filename := "testfile"
+	file, err := fs.Create(filename)
+	if err != nil {
+		t.Fatal("open failed:", err)
+	}
+	if _, err = file.WriteString(abc); err != nil {
+		t.Fatal("writing failed:", err)
+	}
+	file.Close()
+
+	dir, err := fs.Lstat(filename)
+	if err != nil {
+		t.Fatal("lstat failed:", err)
+	}
+	if filename != dir.Name() {
+		t.Error("name should be ", filename, "; is", dir.Name())
+	}
+	filesize := int64(len(abc))
+	if dir.Size() != filesize {
+		t.Error("size should be", filesize, "; is", dir.Size())
+	}
+}
+
 func TestRename(t *testing.T) {
 	const content = "read me"
 	fs := NewFS()
@@ -757,7 +893,402 @@ func TestRename(t *testing.T) {
 	if err := fs.Rename("/newdirectory/README.txt", "/README.txt"); err != nil {
 		t.Errorf("Unexpected error renaming file")
 	}
+}
 
+func TestRenameOverwriteDest(t *testing.T) {
+	fs := NewFS()
+	from, to := "renamefrom", "renameto"
+
+	toData := []byte("to")
+	fromData := []byte("from")
+
+	err := ioutil.WriteFile(fs, to, toData, 0777)
+	if err != nil {
+		t.Fatalf("write file %q failed: %v", to, err)
+	}
+
+	err = ioutil.WriteFile(fs, from, fromData, 0777)
+	if err != nil {
+		t.Fatalf("write file %q failed: %v", from, err)
+	}
+	err = fs.Rename(from, to)
+	if err != nil {
+		t.Fatalf("rename %q, %q failed: %v", to, from, err)
+	}
+
+	_, err = fs.Stat(from)
+	if err == nil {
+		t.Errorf("from file %q still exists", from)
+	}
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("stat from: %v", err)
+	}
+	toFi, err := fs.Stat(to)
+	if err != nil {
+		t.Fatalf("stat %q failed: %v", to, err)
+	}
+	if toFi.Size() != int64(len(fromData)) {
+		t.Errorf(`"to" size = %d; want %d (old "from" size)`, toFi.Size(), len(fromData))
+	}
+}
+
+func TestRenameFailed(t *testing.T) {
+	fs := NewFS()
+	from, to := "renamefrom", "renameto"
+
+	err := fs.Rename(from, to)
+	switch err := err.(type) {
+	case *os.LinkError:
+		if err.Op != "rename" {
+			t.Errorf("rename %q, %q: err.Op: want %q, got %q", from, to, "rename", err.Op)
+		}
+		if err.Old != from {
+			t.Errorf("rename %q, %q: err.Old: want %q, got %q", from, to, from, err.Old)
+		}
+		if err.New != to {
+			t.Errorf("rename %q, %q: err.New: want %q, got %q", from, to, to, err.New)
+		}
+	case nil:
+		t.Errorf("rename %q, %q: expected error, got nil", from, to)
+	default:
+		t.Errorf("rename %q, %q: expected %T, got %T %v", from, to, new(os.LinkError), err, err)
+	}
+}
+
+func TestRenameToDirFailed(t *testing.T) {
+	fs := NewFS()
+	from, to := "renamefrom", "renameto"
+
+	fs.Mkdir(from, 0777)
+	fs.Mkdir(to, 0777)
+
+	err := fs.Rename(from, to)
+	switch err := err.(type) {
+	case *os.LinkError:
+		if err.Op != "rename" {
+			t.Errorf("rename %q, %q: err.Op: want %q, got %q", from, to, "rename", err.Op)
+		}
+		if err.Old != from {
+			t.Errorf("rename %q, %q: err.Old: want %q, got %q", from, to, from, err.Old)
+		}
+		if err.New != to {
+			t.Errorf("rename %q, %q: err.New: want %q, got %q", from, to, to, err.New)
+		}
+	case nil:
+		t.Errorf("rename %q, %q: expected error, got nil", from, to)
+	default:
+		t.Errorf("rename %q, %q: expected %T, got %T %v", from, to, new(os.LinkError), err, err)
+	}
+}
+
+func checkSize(t *testing.T, f absfs.File, size int64) {
+	dir, err := f.Stat()
+	if err != nil {
+		t.Fatalf("Stat %q (looking for size %d): %s", f.Name(), size, err)
+	}
+	if dir.Size() != size {
+		t.Errorf("Stat %q: size %d want %d", f.Name(), dir.Size(), size)
+	}
+}
+
+func TestFTruncate(t *testing.T) {
+	fs := NewFS()
+	f, err := fs.Create("testfile")
+	if err != nil {
+		t.Fatal("create failed:", err)
+	}
+	defer f.Close()
+
+	checkSize(t, f, 0)
+	f.Write([]byte("hello, world\n"))
+	checkSize(t, f, 13)
+	f.Truncate(10)
+	checkSize(t, f, 10)
+	f.Truncate(1024)
+	checkSize(t, f, 1024)
+	f.Truncate(0)
+	checkSize(t, f, 0)
+	_, err = f.Write([]byte("surprise!"))
+	if err == nil {
+		checkSize(t, f, 13+9) // wrote at offset past where hello, world was.
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	fs := NewFS()
+	f, err := fs.Create("testfile")
+	if err != nil {
+		t.Fatal("create failed:", err)
+	}
+	defer f.Close()
+
+	checkSize(t, f, 0)
+	f.Write([]byte("hello, world\n"))
+	checkSize(t, f, 13)
+	fs.Truncate(f.Name(), 10)
+	checkSize(t, f, 10)
+	fs.Truncate(f.Name(), 1024)
+	checkSize(t, f, 1024)
+	fs.Truncate(f.Name(), 0)
+	checkSize(t, f, 0)
+	_, err = f.Write([]byte("surprise!"))
+	if err == nil {
+		checkSize(t, f, 13+9) // wrote at offset past where hello, world was.
+	}
+}
+
+func TestChdir(t *testing.T) {
+	fs := NewFS()
+	const N = 10
+	c := make(chan bool)
+	cpwd := make(chan string)
+	for i := 0; i < N; i++ {
+		go func(i int) {
+			// Lock half the goroutines in their own operating system
+			// thread to exercise more scheduler possibilities.
+			if i%2 == 1 {
+				runtime.LockOSThread()
+			}
+			<-c
+			pwd, err := fs.Getwd()
+			if err != nil {
+				t.Errorf("Getwd on goroutine %d: %v", i, err)
+				return
+			}
+			cpwd <- pwd
+		}(i)
+	}
+	d, err := ioutil.TempDir(fs, "", "test")
+	if err != nil {
+		t.Fatalf("TempDir: %v", err)
+	}
+	if err := fs.Chdir(d); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	d, err = fs.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	close(c)
+	for i := 0; i < N; i++ {
+		pwd := <-cpwd
+		if pwd != d {
+			t.Errorf("Getwd returned %q; want %q", pwd, d)
+		}
+	}
+}
+
+func newFile(testName string, fs *FileSystem, t *testing.T) (f absfs.File) {
+	f, err := ioutil.TempFile(fs, "/", "_Go_"+testName)
+	if err != nil {
+		t.Fatalf("TempFile %s: %s", testName, err)
+	}
+	return
+}
+
+func TestSeek(t *testing.T) {
+	fs := NewFS()
+	f := newFile("TestSeek", fs, t)
+	defer f.Close()
+
+	const data = "hello, world\n"
+	io.WriteString(f, data)
+
+	type test struct {
+		in     int64
+		whence int
+		out    int64
+	}
+	var tests = []test{
+		{0, io.SeekCurrent, int64(len(data))},
+		{0, io.SeekStart, 0},
+		{5, io.SeekStart, 5},
+		{0, io.SeekEnd, int64(len(data))},
+		{0, io.SeekStart, 0},
+		{-1, io.SeekEnd, int64(len(data)) - 1},
+		{1 << 33, io.SeekStart, 1 << 33},
+		{1 << 33, io.SeekEnd, 1<<33 + int64(len(data))},
+
+		// Issue 21681, Windows 4G-1, etc:
+		{1<<32 - 1, io.SeekStart, 1<<32 - 1},
+		{0, io.SeekCurrent, 1<<32 - 1},
+		{2<<32 - 1, io.SeekStart, 2<<32 - 1},
+		{0, io.SeekCurrent, 2<<32 - 1},
+	}
+	for i, tt := range tests {
+		off, err := f.Seek(tt.in, tt.whence)
+		if off != tt.out || err != nil {
+			t.Errorf("#%d: Seek(%v, %v) = %v, %v want %v, nil", i, tt.in, tt.whence, off, err, tt.out)
+		}
+	}
+}
+
+func TestReadAt(t *testing.T) {
+	fs := NewFS()
+	f := newFile("TestReadAt", fs, t)
+	defer f.Close()
+
+	const data = "hello, world\n"
+	io.WriteString(f, data)
+
+	b := make([]byte, 5)
+	n, err := f.ReadAt(b, 7)
+	if err != nil || n != len(b) {
+		t.Fatalf("ReadAt 7: %d, %v", n, err)
+	}
+	if string(b) != "world" {
+		t.Fatalf("ReadAt 7: have %q want %q", string(b), "world")
+	}
+}
+
+// Verify that ReadAt doesn't affect seek offset.
+func TestReadAtOffset(t *testing.T) {
+	fs := NewFS()
+	f := newFile("TestReadAtOffset", fs, t)
+	defer f.Close()
+
+	const data = "hello, world\n"
+	io.WriteString(f, data)
+
+	f.Seek(0, 0)
+	b := make([]byte, 5)
+
+	n, err := f.ReadAt(b, 7)
+	if err != nil || n != len(b) {
+		t.Fatalf("ReadAt 7: %d, %v", n, err)
+	}
+	if string(b) != "world" {
+		t.Fatalf("ReadAt 7: have %q want %q", string(b), "world")
+	}
+
+	n, err = f.Read(b)
+	if err != nil || n != len(b) {
+		t.Fatalf("Read: %d, %v", n, err)
+	}
+	if string(b) != "hello" {
+		t.Fatalf("Read: have %q want %q", string(b), "hello")
+	}
+}
+
+// Verify that ReadAt doesn't allow negative offset.
+func TestReadAtNegativeOffset(t *testing.T) {
+	fs := NewFS()
+	f := newFile("TestReadAtNegativeOffset", fs, t)
+	defer f.Close()
+
+	const data = "hello, world\n"
+	io.WriteString(f, data)
+
+	f.Seek(0, 0)
+	b := make([]byte, 5)
+
+	n, err := f.ReadAt(b, -10)
+
+	const wantsub = "negative offset"
+	if !strings.Contains(fmt.Sprint(err), wantsub) || n != 0 {
+		t.Errorf("ReadAt(-10) = %v, %v; want 0, ...%q...", n, err, wantsub)
+	}
+}
+
+func TestWriteAt(t *testing.T) {
+	fs := NewFS()
+	f := newFile("TestWriteAt", fs, t)
+	defer f.Close()
+
+	const data = "hello, world\n"
+	io.WriteString(f, data)
+
+	n, err := f.WriteAt([]byte("WORLD"), 7)
+	if err != nil || n != 5 {
+		t.Fatalf("WriteAt 7: %d, %v", n, err)
+	}
+
+	b, err := ioutil.ReadFile(fs, f.Name())
+	if err != nil {
+		t.Fatalf("ReadFile %s: %v", f.Name(), err)
+	}
+	if string(b) != "hello, WORLD\n" {
+		t.Fatalf("after write: have %q want %q", string(b), "hello, WORLD\n")
+	}
+}
+
+// Verify that WriteAt doesn't allow negative offset.
+func TestWriteAtNegativeOffset(t *testing.T) {
+	fs := NewFS()
+	f := newFile("TestWriteAtNegativeOffset", fs, t)
+	defer f.Close()
+
+	n, err := f.WriteAt([]byte("WORLD"), -10)
+
+	const wantsub = "negative offset"
+	if !strings.Contains(fmt.Sprint(err), wantsub) || n != 0 {
+		t.Errorf("WriteAt(-10) = %v, %v; want 0, ...%q...", n, err, wantsub)
+	}
+}
+
+// Verify that WriteAt doesn't work in append mode.
+func TestWriteAtInAppendMode(t *testing.T) {
+	fs := NewFS()
+	f, err := fs.OpenFile("write_at_in_append_mode.txt", os.O_APPEND|os.O_CREATE, 0666)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	defer f.Close()
+
+	_, err = f.WriteAt([]byte(""), 1)
+	if err != os.ErrPermission {
+		t.Fatalf("f.WriteAt returned %v, expected %v", err, os.ErrPermission)
+	}
+}
+
+func writeFile(fs *FileSystem, t *testing.T, fname string, flag int, text string) string {
+	f, err := fs.OpenFile(fname, flag, 0666)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	n, err := io.WriteString(f, text)
+	if err != nil {
+		t.Fatalf("WriteString: %d, %v", n, err)
+	}
+	f.Close()
+	data, err := ioutil.ReadFile(fs, fname)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	return string(data)
+}
+
+func TestAppend(t *testing.T) {
+	fs := NewFS()
+	const f = "append.txt"
+	s := writeFile(fs, t, f, os.O_CREATE|os.O_TRUNC|os.O_RDWR, "new")
+	if s != "new" {
+		t.Fatalf("writeFile: have %q want %q", s, "new")
+	}
+	s = writeFile(fs, t, f, os.O_APPEND|os.O_RDWR, "|append")
+	if s != "new|append" {
+		t.Fatalf("writeFile: have %q want %q", s, "new|append")
+	}
+	s = writeFile(fs, t, f, os.O_CREATE|os.O_APPEND|os.O_RDWR, "|append")
+	if s != "new|append|append" {
+		t.Fatalf("writeFile: have %q want %q", s, "new|append|append")
+	}
+	err := fs.Remove(f)
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	s = writeFile(fs, t, f, os.O_CREATE|os.O_APPEND|os.O_RDWR, "new&append")
+	if s != "new&append" {
+		t.Fatalf("writeFile: after append have %q want %q", s, "new&append")
+	}
+	s = writeFile(fs, t, f, os.O_CREATE|os.O_RDWR, "old")
+	if s != "old&append" {
+		t.Fatalf("writeFile: after create have %q want %q", s, "old&append")
+	}
+	s = writeFile(fs, t, f, os.O_CREATE|os.O_TRUNC|os.O_RDWR, "new")
+	if s != "new" {
+		t.Fatalf("writeFile: after truncate have %q want %q", s, "new")
+	}
 }
 
 func TestModTime(t *testing.T) {

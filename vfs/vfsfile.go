@@ -38,17 +38,16 @@ type sealedFile struct {
 	f *File
 
 	ciphertext []byte
-	size       int64
 	key        *memguard.Enclave
 }
 
-func (s *sealedFile) updateSize() {
-	if len(s.ciphertext) == 0 {
-		s.size = 0
+func (f *File) updateSize() {
+	if len(f.data.ciphertext) == 0 {
+		f.node.Size = 0
 		return
 	}
 
-	s.size = int64(len(s.ciphertext) - core.Overhead)
+	f.node.Size = int64(len(f.data.ciphertext) - core.Overhead)
 }
 
 func (f *File) Name() string {
@@ -56,16 +55,22 @@ func (f *File) Name() string {
 }
 
 func (f *File) Read(p []byte) (int, error) {
+	if f.node == nil {
+		return 0, &os.PathError{Op: "read", Path: f.name, Err: os.ErrClosed}
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
 	if f.flags == 3712 {
 		return 0, io.EOF
 	}
 	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
 		return 0, &os.PathError{Op: "read", Path: f.name, Err: syscall.EBADF} //os.ErrPermission
 	}
-	if f.node.IsDir() && atomic.LoadInt64(&f.data.size) == 0 {
+	if f.node.IsDir() && atomic.LoadInt64(&f.node.Size) == 0 {
 		return 0, &os.PathError{Op: "read", Path: f.name, Err: syscall.EISDIR} //os.ErrPermission
 	}
-	if atomic.LoadInt64(&f.offset) >= atomic.LoadInt64(&f.data.size) {
+	if atomic.LoadInt64(&f.offset) >= atomic.LoadInt64(&f.node.Size) {
 		return 0, io.EOF
 	}
 
@@ -74,7 +79,7 @@ func (f *File) Read(p []byte) (int, error) {
 		key *memguard.LockedBuffer
 	)
 
-	if atomic.LoadInt64(&f.data.size) != 0 {
+	if atomic.LoadInt64(&f.node.Size) != 0 {
 		f.mtx.RLock()
 		key, err = f.data.key.Open()
 		f.mtx.RUnlock()
@@ -85,7 +90,7 @@ func (f *File) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	plaintext := make([]byte, f.data.size)
+	plaintext := make([]byte, f.node.Size)
 	f.mtx.RLock()
 	_, err = core.Decrypt(f.data.ciphertext, key.Bytes(), plaintext)
 	key.Destroy()
@@ -110,24 +115,34 @@ func (f *File) Read(p []byte) (int, error) {
 }
 
 func (f *File) ReadAt(b []byte, off int64) (n int, err error) {
+	if off < 0 {
+		return 0, &os.PathError{Op: "readat", Path: f.name, Err: errors.New("negative offset")}
+	}
 	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
 		return 0, os.ErrPermission
 	}
+	// ReadAt shouldn't affect Seek offset
+	curOff := atomic.LoadInt64(&f.offset)
 	atomic.StoreInt64(&f.offset, off)
+	defer atomic.StoreInt64(&f.offset, curOff)
+
 	return f.Read(b)
 }
 
 func (f *File) Write(p []byte) (int, error) {
+	if f.node == nil {
+		return 0, &os.PathError{Op: "write", Path: f.name, Err: os.ErrClosed}
+	}
 	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
 		return 0, &os.PathError{Op: "write", Path: f.name, Err: syscall.EBADF}
 	}
 
 	var (
 		err       error
-		plaintext = make([]byte, f.data.size)
+		plaintext = make([]byte, f.node.Size)
 	)
 
-	if atomic.LoadInt64(&f.data.size) != 0 {
+	if atomic.LoadInt64(&f.node.Size) != 0 {
 		f.mtx.RLock()
 		key, err := f.data.key.Open()
 		if err != nil {
@@ -145,11 +160,10 @@ func (f *File) Write(p []byte) (int, error) {
 	data := plaintext
 	offset := int(atomic.LoadInt64(&f.offset))
 	size := len(p) + offset
-	if int64(size) > f.data.size {
+	if int64(size) > f.node.Size {
 		data = make([]byte, size)
 		core.Copy(data, plaintext)
 	}
-	core.Wipe(plaintext)
 
 	core.Copy(data[offset:], p)
 	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
@@ -157,7 +171,7 @@ func (f *File) Write(p []byte) (int, error) {
 	f.mtx.Lock()
 	f.data.ciphertext, err = core.Encrypt(data, newKey.Bytes())
 	f.data.key = newKey.Seal()
-	f.data.updateSize()
+	f.updateSize()
 	core.Wipe(data)
 	f.mtx.Unlock()
 
@@ -177,6 +191,13 @@ func (f *File) Write(p []byte) (int, error) {
 }
 
 func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
+	if off < 0 {
+		return 0, &os.PathError{Op: "writeat", Path: f.name, Err: errors.New("negative offset")}
+	}
+	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
+		return 0, os.ErrPermission
+	}
+
 	atomic.StoreInt64(&f.offset, off)
 	return f.Write(b)
 }
@@ -198,7 +219,7 @@ func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
 	case io.SeekCurrent:
 		atomic.AddInt64(&f.offset, offset)
 	case io.SeekEnd:
-		atomic.StoreInt64(&f.offset, atomic.LoadInt64(&f.data.size)+offset)
+		atomic.StoreInt64(&f.offset, atomic.LoadInt64(&f.node.Size)+offset)
 	}
 	if f.offset < 0 {
 		atomic.StoreInt64(&f.offset, 0)
@@ -217,7 +238,6 @@ func (f *File) Sync() error {
 	f.fs.mtx.Lock()
 	f.fs.data[int(f.node.Ino)] = f.data
 	f.fs.mtx.Unlock()
-	f.node.Size = atomic.LoadInt64(&f.data.size)
 
 	return nil
 }
@@ -278,11 +298,11 @@ func (f *File) Readdirnames(n int) ([]string, error) {
 }
 
 func (f *File) Truncate(size int64) error {
+	if f.node == nil {
+		return &os.PathError{Op: "truncate", Path: f.name, Err: os.ErrClosed}
+	}
 	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
 		return os.ErrPermission
-	}
-	if size < 0 {
-		return &os.PathError{Op: "truncate", Path: f.name, Err: os.ErrClosed}
 	}
 
 	f.mtx.Lock()
@@ -293,12 +313,12 @@ func (f *File) Truncate(size int64) error {
 		plaintext []byte
 	)
 
-	if f.data.size != 0 {
+	if f.node.Size != 0 {
 		key, err := f.data.key.Open()
 		if err != nil {
 			return err
 		}
-		plaintext = make([]byte, f.data.size)
+		plaintext = make([]byte, f.node.Size)
 		_, err = core.Decrypt(f.data.ciphertext, key.Bytes(), plaintext)
 		if err != nil {
 			return err
@@ -309,13 +329,13 @@ func (f *File) Truncate(size int64) error {
 	}
 
 	// TODO: should this be copied in constant time?
-	if size <= f.data.size {
+	if size <= f.node.Size {
 		plaintext = plaintext[:int(size)]
 		newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
 		f.data.ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
 		f.data.key = newKey.Seal()
 		core.Wipe(plaintext)
-		f.data.updateSize()
+		f.updateSize()
 		if err != nil {
 			return err
 		}
@@ -329,7 +349,7 @@ func (f *File) Truncate(size int64) error {
 	f.data.ciphertext, err = core.Encrypt(data, newKey.Bytes())
 	f.data.key = newKey.Seal()
 	core.Wipe(data)
-	f.data.updateSize()
+	f.updateSize()
 	if err != nil {
 		return err
 	}

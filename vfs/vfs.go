@@ -164,7 +164,7 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 		file := &File{fs: fs, name: name, flags: flag, node: fs.dir, data: data}
 		if data != nil {
 			if appendFile {
-				file.offset = data.size
+				file.offset = fs.dir.Size
 			}
 			data.f = file
 		}
@@ -210,9 +210,10 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 
 		// if we must truncate the file
 		if truncate {
-			fs.data[int(node.Ino)] = &sealedFile{}
+			sfile := fs.data[int(node.Ino)]
+			sfile.ciphertext = nil
+			sfile.key = nil
 		}
-
 	} else { // !exists
 		// error if we cannot create the file
 		if !create {
@@ -240,8 +241,11 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 
 	file := &File{fs: fs, name: name, flags: flag, node: node, data: data}
 	if data != nil {
+		if truncate {
+			node.Size = 0
+		}
 		if appendFile {
-			file.offset = data.size
+			file.offset = node.Size
 		}
 		data.f = file
 	}
@@ -264,13 +268,13 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 	fs.mtx.RUnlock()
 
 	var plaintext []byte
-	if file.size != 0 {
+	if file.f.node.Size != 0 {
 		file.f.mtx.RLock()
 		key, err := file.key.Open()
 		if err != nil {
 			return err
 		}
-		plaintext = make([]byte, file.size)
+		plaintext = make([]byte, file.f.node.Size)
 		_, err = core.Decrypt(file.ciphertext, key.Bytes(), plaintext)
 		if err != nil {
 			return err
@@ -282,14 +286,14 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 	}
 
 	// TODO: should this be copied in constant time?
-	if size <= file.size {
+	if size <= file.f.node.Size {
 		plaintext = plaintext[:int(size)]
 		newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
 
 		file.f.mtx.Lock()
 		file.ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
 		file.key = newKey.Seal()
-		file.updateSize()
+		file.f.updateSize()
 		file.f.mtx.Unlock()
 
 		core.Wipe(plaintext)
@@ -307,7 +311,7 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 	file.f.mtx.Lock()
 	file.ciphertext, err = core.Encrypt(data, newKey.Bytes())
 	file.key = newKey.Seal()
-	file.updateSize()
+	file.f.updateSize()
 	file.f.mtx.Unlock()
 
 	core.Wipe(data)
@@ -501,7 +505,11 @@ func (fs *FileSystem) Stat(name string) (os.FileInfo, error) {
 		return &FileInfo{"/", fs.root}, nil
 	}
 	node, err := fs.fileStat(fs.cwd, name)
-	return &FileInfo{Base(name), node}, err
+	if err != nil {
+		return nil, err
+	}
+
+	return &FileInfo{Base(name), node}, nil
 }
 
 func (fs *FileSystem) Lstat(name string) (os.FileInfo, error) {

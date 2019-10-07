@@ -165,6 +165,9 @@ func (n *Inode) Rename(oldpath, newpath string) error {
 
 	var rename string
 	tnode, err := n.Resolve(newpath)
+	if err == nil && tnode.IsDir() {
+		return syscall.EEXIST
+	}
 	if (err == nil && !tnode.IsDir()) || (err != nil && os.IsNotExist(err)) {
 		var tdir string
 		tdir, rename = filepath.Split(newpath)
