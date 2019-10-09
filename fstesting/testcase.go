@@ -15,14 +15,7 @@ import (
 	"time"
 
 	"github.com/capnspacehook/pandorasbox/absfs"
-	"github.com/fatih/color"
 )
-
-var yellow = color.New(color.FgYellow).SprintFunc()
-var red = color.New(color.FgRed).SprintFunc()
-var green = color.New(color.FgGreen).SprintFunc()
-var blue = color.New(color.FgBlue).SprintFunc()
-var magenta = color.New(color.FgMagenta).SprintFunc()
 
 type ErrorReport struct {
 	Op       string
@@ -43,7 +36,7 @@ func (e *ErrorReport) Error() string {
 }
 
 func (e *ErrorReport) Stack() string {
-	return red(e.StackStr)
+	return e.StackStr
 }
 
 func (e *ErrorReport) String() string {
