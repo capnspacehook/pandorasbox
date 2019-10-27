@@ -41,6 +41,12 @@ func Join(elem ...string) string {
 		return MakeVFSPath(vfs.Join(elem...))
 	}
 
+	for i := range elem[1:] {
+		if vfsPath, ok := ConvertVFSPath(elem[i+1]); ok {
+			elem[i+1] = vfsPath
+		}
+	}
+
 	return filepath.Join(elem...)
 }
 
