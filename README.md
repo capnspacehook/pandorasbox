@@ -100,7 +100,11 @@ func WriteFileLocalBox() {
     data, _ := ioutil.ReadFile(myBox, "vfs://file.txt")
     fmt.Println(string(data))
 }
-```    
+```
+
+### Forcing use of Host FS/VFS
+
+If for some reason you need to force the usage of either the host's filesystem or the VFS, Pandora's box has you covered. All of `pandorasbox`'s functions that are in also in `os` have 3 variants: normal, OS, and VFS. The normal variant auto-detirmines what to use based off the input path, as described earlier. The OS and VFS variants force the usage of a specific filesystem. For instance, `pandorasbox.Mkdir()` will auto-detirmine which filesystem to use, while `pandorasbox.OSMkdir()` will always use the host's filesystem, and `pandorasbox.VFSMkdir()` will always use the VFS. 
 
 ### Memory Safety
 
