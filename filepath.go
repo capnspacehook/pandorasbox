@@ -24,6 +24,24 @@ func Clean(path string) string {
 	return filepath.Clean(path)
 }
 
+func ToSlash(path string) string {
+	if vfsPath, ok := ConvertVFSPath(path); ok {
+		path = vfsPath
+		return MakeVFSPath(filepath.ToSlash(path))
+	}
+
+	return filepath.ToSlash(path)
+}
+
+func FromSlash(path string) string {
+	if vfsPath, ok := ConvertVFSPath(path); ok {
+		path = vfsPath
+		return MakeVFSPath(filepath.FromSlash(path))
+	}
+
+	return filepath.FromSlash(path)
+}
+
 func Split(path string) (string, string) {
 	if vfsPath, ok := ConvertVFSPath(path); ok {
 		path = vfsPath

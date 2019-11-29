@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/awnumar/memguard"
@@ -228,6 +229,15 @@ func (b *Box) Symlink(oldname, newname string) error {
 	}
 
 	return b.osfs.Symlink(oldname, newname)
+}
+
+func (b *Box) Walk(root string, walkFn filepath.WalkFunc) error {
+	if vfsPath, ok := ConvertVFSPath(root); ok {
+		root = vfsPath
+		return b.vfs.Walk(root, walkFn)
+	}
+
+	return b.osfs.Walk(root, walkFn)
 }
 
 // io/ioutil methods

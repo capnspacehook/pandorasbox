@@ -3,6 +3,7 @@ package pandorasbox
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/capnspacehook/pandorasbox/absfs"
@@ -108,6 +109,10 @@ func Readlink(name string) (string, error) {
 
 func Symlink(oldname, newname string) error {
 	return box.Rename(oldname, newname)
+}
+
+func Walk(root string, walkFn filepath.WalkFunc) error {
+	return box.Walk(root, walkFn)
 }
 
 // io/ioutil methods
