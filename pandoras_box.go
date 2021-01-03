@@ -108,7 +108,7 @@ func Readlink(name string) (string, error) {
 }
 
 func Symlink(oldname, newname string) error {
-	return box.Rename(oldname, newname)
+	return box.Symlink(oldname, newname)
 }
 
 func Walk(root string, walkFn filepath.WalkFunc) error {
