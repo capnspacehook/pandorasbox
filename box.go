@@ -4,8 +4,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/awnumar/memguard"
 	"github.com/capnspacehook/pandorasbox/absfs"
@@ -27,16 +25,12 @@ func NewBox() *Box {
 	return box
 }
 
-func (b *Box) Abs(path string) (string, error) {
-	if vfsPath, ok := ConvertVFSPath(path); ok {
-		absPath, err := b.vfs.Abs(vfsPath)
-		if err != nil {
-			return "", err
-		}
-		return MakeVFSPath(absPath), nil
+func (b *Box) Open(name string) (absfs.File, error) {
+	if vfsName, ok := ConvertVFSPath(name); ok {
+		return b.vfs.Open(vfsName)
 	}
 
-	return b.osfs.Abs(path)
+	return b.osfs.Open(name)
 }
 
 func (b *Box) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
@@ -47,6 +41,14 @@ func (b *Box) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, err
 	return b.osfs.OpenFile(name, flag, perm)
 }
 
+func (b *Box) Create(name string) (absfs.File, error) {
+	if vfsName, ok := ConvertVFSPath(name); ok {
+		return b.vfs.Create(vfsName)
+	}
+
+	return b.osfs.Create(name)
+}
+
 func (b *Box) Mkdir(name string, perm os.FileMode) error {
 	if vfsName, ok := ConvertVFSPath(name); ok {
 		return b.vfs.Mkdir(vfsName, perm)
@@ -55,12 +57,20 @@ func (b *Box) Mkdir(name string, perm os.FileMode) error {
 	return b.osfs.Mkdir(name, perm)
 }
 
-func (b *Box) Remove(name string) error {
+func (b *Box) MkdirAll(name string, perm os.FileMode) error {
 	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Remove(vfsName)
+		return b.vfs.MkdirAll(vfsName, perm)
 	}
 
-	return b.osfs.Remove(name)
+	return b.osfs.MkdirAll(name, perm)
+}
+
+func (b *Box) Stat(name string) (os.FileInfo, error) {
+	if vfsName, ok := ConvertVFSPath(name); ok {
+		return b.vfs.Stat(vfsName)
+	}
+
+	return b.osfs.Stat(name)
 }
 
 func (b *Box) Rename(oldpath, newpath string) error {
@@ -75,36 +85,28 @@ func (b *Box) Rename(oldpath, newpath string) error {
 	return b.osfs.Rename(oldpath, newpath)
 }
 
-func (b *Box) Stat(name string) (os.FileInfo, error) {
+func (b *Box) Remove(name string) error {
 	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Stat(vfsName)
+		return b.vfs.Remove(vfsName)
 	}
 
-	return b.osfs.Stat(name)
+	return b.osfs.Remove(name)
 }
 
-func (b *Box) Chmod(name string, mode os.FileMode) error {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Chmod(vfsName, mode)
+func (b *Box) RemoveAll(path string) error {
+	if vfsPath, ok := ConvertVFSPath(path); ok {
+		return b.vfs.RemoveAll(vfsPath)
 	}
 
-	return b.osfs.Chmod(name, mode)
+	return b.osfs.RemoveAll(path)
 }
 
-func (b *Box) Chtimes(name string, atime time.Time, mtime time.Time) error {
+func (b *Box) Truncate(name string, size int64) error {
 	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Chtimes(vfsName, atime, mtime)
+		return b.vfs.Truncate(vfsName, size)
 	}
 
-	return b.osfs.Chtimes(name, atime, mtime)
-}
-
-func (b *Box) Chown(name string, uid, gid int) error {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Chown(vfsName, uid, gid)
-	}
-
-	return b.osfs.Chown(name, uid, gid)
+	return b.osfs.Truncate(name, size)
 }
 
 func (b *Box) Separator(vfsMode bool) uint8 {
@@ -155,91 +157,6 @@ func (b *Box) GetTempDir(vfsMode bool) string {
 	return b.osfs.TempDir()
 }
 
-func (b *Box) Open(name string) (absfs.File, error) {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Open(vfsName)
-	}
-
-	return b.osfs.Open(name)
-}
-
-func (b *Box) Create(name string) (absfs.File, error) {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Create(vfsName)
-	}
-
-	return b.osfs.Create(name)
-}
-
-func (b *Box) MkdirAll(name string, perm os.FileMode) error {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.MkdirAll(vfsName, perm)
-	}
-
-	return b.osfs.MkdirAll(name, perm)
-}
-
-func (b *Box) RemoveAll(path string) error {
-	if vfsPath, ok := ConvertVFSPath(path); ok {
-		return b.vfs.RemoveAll(vfsPath)
-	}
-
-	return b.osfs.RemoveAll(path)
-}
-
-func (b *Box) Truncate(name string, size int64) error {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Truncate(vfsName, size)
-	}
-
-	return b.osfs.Truncate(name, size)
-}
-
-func (b *Box) Lstat(name string) (os.FileInfo, error) {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Lstat(vfsName)
-	}
-
-	return b.osfs.Lstat(name)
-}
-
-func (b *Box) Lchown(name string, uid, gid int) error {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Lchown(vfsName, uid, gid)
-	}
-
-	return b.osfs.Lchown(name, uid, gid)
-}
-
-func (b *Box) Readlink(name string) (string, error) {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Readlink(vfsName)
-	}
-
-	return b.osfs.Readlink(name)
-}
-
-func (b *Box) Symlink(oldname, newname string) error {
-	vfsOldName, oldNameVFS := ConvertVFSPath(oldname)
-	vfsNewName, newNameVFS := ConvertVFSPath(newname)
-	if oldNameVFS && newNameVFS {
-		return b.vfs.Rename(vfsOldName, vfsNewName)
-	} else if (oldNameVFS && !newNameVFS) || (!oldNameVFS && newNameVFS) {
-		return &os.LinkError{Op: "symlink", Old: oldname, New: newname, Err: errors.New("oldname and newname must both either be a VFS path, or normal path")}
-	}
-
-	return b.osfs.Symlink(oldname, newname)
-}
-
-func (b *Box) Walk(root string, walkFn filepath.WalkFunc) error {
-	if vfsPath, ok := ConvertVFSPath(root); ok {
-		root = vfsPath
-		return b.vfs.Walk(root, walkFn)
-	}
-
-	return b.osfs.Walk(root, walkFn)
-}
-
 // io/ioutil methods
 
 func (b *Box) ReadAll(r io.Reader) ([]byte, error) {
@@ -288,4 +205,16 @@ func (b *Box) TempDir(dir, prefix string) (string, error) {
 
 func (b *Box) Close() {
 	memguard.Purge()
+}
+
+func (b *Box) Abs(path string) (string, error) {
+	if vfsPath, ok := ConvertVFSPath(path); ok {
+		absPath, err := b.vfs.Abs(vfsPath)
+		if err != nil {
+			return "", err
+		}
+		return MakeVFSPath(absPath), nil
+	}
+
+	return b.osfs.Abs(path)
 }

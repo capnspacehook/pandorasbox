@@ -195,7 +195,6 @@ func TestVFS(t *testing.T) {
 	if err != nil && err.Error() != "stop" {
 		t.Fatal(err)
 	}
-
 }
 
 func TestMkdir(t *testing.T) {
@@ -242,7 +241,6 @@ outer:
 		}
 		t.Errorf("path error: %q + %q:  %s", path, name, list)
 	}
-
 }
 
 func TestOpenWrite(t *testing.T) {
@@ -283,7 +281,6 @@ func TestOpenWrite(t *testing.T) {
 
 		t.Fatal("bytes written do not compare to bytes read")
 	}
-
 }
 
 func TestCreate(t *testing.T) {
@@ -342,7 +339,6 @@ func TestCreate(t *testing.T) {
 			t.Errorf("Wrong name: %s", name)
 		}
 	}
-
 }
 
 func TestMkdirAbsRel(t *testing.T) {
@@ -396,7 +392,7 @@ func TestMkdirTree(t *testing.T) {
 		t.Errorf("Expected error creating directory with non-existing parent")
 	}
 
-	//TODO: Subdir of file
+	// TODO: Subdir of file
 }
 
 func TestRemove(t *testing.T) {
@@ -629,7 +625,7 @@ func TestOpenAppend(t *testing.T) {
 }
 
 func TestTruncateToLength(t *testing.T) {
-	var params = []struct {
+	params := []struct {
 		size int64
 		err  bool
 	}{
@@ -765,23 +761,6 @@ func TestStatError(t *testing.T) {
 	if perr, ok := err.(*os.PathError); !ok {
 		t.Errorf("got %T, want %T", err, perr)
 	}
-
-	link := "symlink"
-	err = fs.Symlink(path, link)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	fi, err = fs.Stat(link)
-	if err == nil {
-		t.Fatal("got nil, want error")
-	}
-	if fi != nil {
-		t.Errorf("got %v, want nil", fi)
-	}
-	if perr, ok := err.(*os.PathError); !ok {
-		t.Errorf("got %T, want %T", err, perr)
-	}
 }
 
 func TestFstat(t *testing.T) {
@@ -802,31 +781,6 @@ func TestFstat(t *testing.T) {
 	dir, err := file.Stat()
 	if err != nil {
 		t.Fatal("fstat failed:", err)
-	}
-	if filename != dir.Name() {
-		t.Error("name should be ", filename, "; is", dir.Name())
-	}
-	filesize := int64(len(abc))
-	if dir.Size() != filesize {
-		t.Error("size should be", filesize, "; is", dir.Size())
-	}
-}
-
-func TestLstat(t *testing.T) {
-	fs := NewFS()
-	filename := "testfile"
-	file, err := fs.Create(filename)
-	if err != nil {
-		t.Fatal("open failed:", err)
-	}
-	if _, err = file.WriteString(abc); err != nil {
-		t.Fatal("writing failed:", err)
-	}
-	file.Close()
-
-	dir, err := fs.Lstat(filename)
-	if err != nil {
-		t.Fatal("lstat failed:", err)
 	}
 	if filename != dir.Name() {
 		t.Error("name should be ", filename, "; is", dir.Name())
@@ -1099,7 +1053,7 @@ func TestSeek(t *testing.T) {
 		whence int
 		out    int64
 	}
-	var tests = []test{
+	tests := []test{
 		{0, io.SeekCurrent, int64(len(data))},
 		{0, io.SeekStart, 0},
 		{5, io.SeekStart, 5},

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/awnumar/fastrand"
 	"github.com/awnumar/memguard"
@@ -217,7 +216,7 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 	} else { // !exists
 		// error if we cannot create the file
 		if !create {
-			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.ENOENT} //os.ErrNotExist}
+			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.ENOENT} // os.ErrNotExist}
 		}
 
 		// Create write-able file
@@ -427,62 +426,6 @@ func (fs *FileSystem) RemoveAll(name string) error {
 	return parent.Unlink(filename)
 }
 
-//Chtimes changes the access and modification times of the named file
-func (fs *FileSystem) Chtimes(name string, atime time.Time, mtime time.Time) error {
-	var err error
-	node := fs.root
-
-	name = inode.Abs(fs.cwd, name)
-	if name != "/" {
-		node, err = fs.root.Resolve(strings.TrimLeft(name, "/"))
-		if err != nil {
-			return err
-		}
-	}
-
-	node.Atime = atime
-	node.Mtime = mtime
-
-	return nil
-}
-
-//Chown changes the owner and group ids of the named file
-func (fs *FileSystem) Chown(name string, uid, gid int) error {
-	var err error
-	node := fs.root
-
-	name = inode.Abs(fs.cwd, name)
-	if name != "/" {
-		node, err = fs.root.Resolve(name)
-		if err != nil {
-			return err
-		}
-	}
-	node.Uid = uint32(uid)
-	node.Gid = uint32(gid)
-
-	return nil
-}
-
-//Chmod changes the mode of the named file to mode.
-func (fs *FileSystem) Chmod(name string, mode os.FileMode) error {
-	var err error
-	node := fs.root
-
-	name = inode.Abs(fs.cwd, name)
-
-	// return nil
-	if name != "/" {
-		node, err = fs.root.Resolve(strings.TrimLeft(name, "/"))
-		if err != nil {
-			return err
-		}
-	}
-	node.Mode = mode
-
-	return nil
-}
-
 // TODO: Avoid cyclical links
 func (fs *FileSystem) fileStat(cwd, name string) (*inode.Inode, error) {
 	name = inode.Abs(cwd, name)
@@ -513,96 +456,7 @@ func (fs *FileSystem) Stat(name string) (os.FileInfo, error) {
 }
 
 func (fs *FileSystem) Lstat(name string) (os.FileInfo, error) {
-	if name == "/" {
-		return &FileInfo{"/", fs.root}, nil
-	}
-	name = inode.Abs(fs.cwd, name)
-	node, err := fs.root.Resolve(strings.TrimLeft(name, "/"))
-	if err != nil {
-		return nil, &os.PathError{Op: "remove", Path: name, Err: err}
-	}
-
-	return &FileInfo{Base(name), node}, nil
-}
-
-func (fs *FileSystem) Lchown(name string, uid, gid int) error {
-	if name == "/" {
-		fs.root.Uid = uint32(uid)
-		fs.root.Gid = uint32(gid)
-		return nil
-	}
-	name = inode.Abs(fs.cwd, name)
-	node, err := fs.root.Resolve(strings.TrimLeft(name, "/"))
-	if err != nil {
-		return err
-	}
-
-	node.Uid = uint32(uid)
-	node.Gid = uint32(gid)
-	return nil
-}
-
-func (fs *FileSystem) Readlink(name string) (string, error) {
-	var ino uint64
-	if name == "/" {
-		ino = fs.root.Ino
-	} else {
-		node, err := fs.root.Resolve(strings.TrimLeft(name, "/"))
-		if err != nil {
-			return "", err
-		}
-		ino = node.Ino
-	}
-
-	fs.mtx.RLock()
-	defer fs.mtx.Unlock()
-
-	return fs.symlinks[ino], nil
-}
-
-func (fs *FileSystem) Symlink(oldname, newname string) error {
-	wd := fs.root
-	if !IsAbs(newname) {
-		wd = fs.dir
-	}
-	var exists bool
-	newNode, err := wd.Resolve(newname)
-	if err == nil {
-		exists = true
-	}
-
-	if exists && newNode.Mode&os.ModeSymlink == 0 {
-		return &os.PathError{Op: "symlink", Path: newname, Err: syscall.EEXIST}
-	}
-	oldNode, err := wd.Resolve(oldname)
-	if err != nil {
-		return &os.PathError{Op: "symlink", Path: oldname, Err: syscall.ENOENT}
-	}
-
-	fs.mtx.Lock()
-	defer fs.mtx.Unlock()
-
-	if exists {
-		newNode.Mode = oldNode.Mode | os.ModeSymlink
-		fs.symlinks[newNode.Ino] = oldname
-		return nil
-	}
-
-	dir, filename := Split(newname)
-	dir = Clean(dir)
-	parent, err := wd.Resolve(dir)
-	if err != nil {
-		return err
-	}
-
-	newNode = fs.ino.New(oldNode.Mode | os.ModeSymlink)
-
-	err = parent.Link(filename, newNode)
-	if err != nil {
-		return &os.PathError{Op: "symlink", Path: newname, Err: err}
-	}
-	fs.symlinks[newNode.Ino] = oldname
-	return nil
+	return fs.Stat(name)
 }
 
 func (fs *FileSystem) Walk(name string, fn filepath.WalkFunc) error {

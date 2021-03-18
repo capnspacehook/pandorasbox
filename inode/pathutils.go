@@ -1,7 +1,7 @@
 package inode
 
 import (
-	filepath "path" // force forward slash separators on all OSs.
+	filepath "path" // force forward slash separators on all OSs
 	"strings"
 )
 

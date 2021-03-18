@@ -40,7 +40,6 @@ func (e *ErrorReport) Stack() string {
 }
 
 func (e *ErrorReport) String() string {
-
 	str := e.Error()
 	start := strings.Index(str, "/")
 	if start < 0 {
@@ -134,11 +133,9 @@ func init() {
 	gob.Register(errno)
 	gob.Register(errorerrorstring) // apparently this won't work
 	gob.Register(errorstring)
-
 }
 
 func testDir() (testdir string, cleanup func(), err error) {
-
 	// assign noop to cleanup until there is something to clean up.
 	cleanup = func() {}
 	timestamp := time.Now().Format(time.RFC3339)
@@ -175,7 +172,6 @@ func testDir() (testdir string, cleanup func(), err error) {
 // The `cleanup` method changes the directory back to the original location
 // and removes testdir and all of it's contents.
 func FsTestDir(fs absfs.FileSystem, path string) (testdir string, cleanup func(), err error) {
-
 	timestamp := time.Now().Format(time.RFC3339)
 	testdir = filepath.Join(path, fmt.Sprintf("FsTestDir%s", timestamp))
 	var cwd string
@@ -397,17 +393,16 @@ func pretest(fs absfs.FileSystem, path string, testcase *Testcase) (string, erro
 		if err != nil {
 			return name, err
 		}
-		err = fs.Chmod(name, 0)
+		/*err = fs.Chmod(name, 0)
 		if err != nil {
 			return name, err
-		}
+		}*/
 	}
 
 	return name, nil
 }
 
 func posttest(fs absfs.FileSystem, testcase *Testcase) error {
-
 	return nil
 }
 
@@ -459,7 +454,6 @@ func test(fs absfs.FileSystem, testNo int, name string, flags int, mode os.FileM
 }
 
 func CompareErrors(err1 error, err2 error) error {
-
 	switch v1 := err1.(type) {
 
 	case nil:

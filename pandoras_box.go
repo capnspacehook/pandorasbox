@@ -3,8 +3,6 @@ package pandorasbox
 import (
 	"io"
 	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/capnspacehook/pandorasbox/absfs"
 )
@@ -15,40 +13,44 @@ func InitGlobalBox() {
 	box = NewBox()
 }
 
-func Abs(path string) (string, error) {
-	return box.Abs(path)
+func Open(name string) (absfs.File, error) {
+	return box.Open(name)
 }
 
 func OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
 	return box.OpenFile(name, flag, perm)
 }
 
+func Create(name string) (absfs.File, error) {
+	return box.Create(name)
+}
+
 func Mkdir(name string, perm os.FileMode) error {
 	return box.Mkdir(name, perm)
 }
 
-func Remove(name string) error {
-	return box.Remove(name)
-}
-
-func Rename(oldpath, newpath string) error {
-	return box.Rename(oldpath, newpath)
+func MkdirAll(name string, perm os.FileMode) error {
+	return box.MkdirAll(name, perm)
 }
 
 func Stat(name string) (os.FileInfo, error) {
 	return box.Stat(name)
 }
 
-func Chmod(name string, mode os.FileMode) error {
-	return box.Chmod(name, mode)
+func Rename(oldpath, newpath string) error {
+	return box.Rename(oldpath, newpath)
 }
 
-func Chtimes(name string, atime time.Time, mtime time.Time) error {
-	return box.Chtimes(name, atime, mtime)
+func Remove(name string) error {
+	return box.Remove(name)
 }
 
-func Chown(name string, uid, gid int) error {
-	return box.Chown(name, uid, gid)
+func RemoveAll(path string) error {
+	return box.RemoveAll(path)
+}
+
+func Truncate(name string, size int64) error {
+	return box.Truncate(name, size)
 }
 
 func Separator(vfs bool) uint8 {
@@ -75,46 +77,6 @@ func GetTempDir(vfs bool) string {
 	return box.GetTempDir(vfs)
 }
 
-func Open(name string) (absfs.File, error) {
-	return box.Open(name)
-}
-
-func Create(name string) (absfs.File, error) {
-	return box.Create(name)
-}
-
-func MkdirAll(name string, perm os.FileMode) error {
-	return box.MkdirAll(name, perm)
-}
-
-func RemoveAll(path string) error {
-	return box.RemoveAll(path)
-}
-
-func Truncate(name string, size int64) error {
-	return box.Truncate(name, size)
-}
-
-func Lstat(name string) (os.FileInfo, error) {
-	return box.Lstat(name)
-}
-
-func Lchown(name string, uid, gid int) error {
-	return box.Lchown(name, uid, gid)
-}
-
-func Readlink(name string) (string, error) {
-	return box.Readlink(name)
-}
-
-func Symlink(oldname, newname string) error {
-	return box.Symlink(oldname, newname)
-}
-
-func Walk(root string, walkFn filepath.WalkFunc) error {
-	return box.Walk(root, walkFn)
-}
-
 // io/ioutil methods
 
 func ReadAll(r io.Reader) ([]byte, error) {
@@ -139,6 +101,10 @@ func TempFile(dir, prefix string) (absfs.File, error) {
 
 func TempDir(dir, prefix string) (string, error) {
 	return box.TempDir(dir, prefix)
+}
+
+func Abs(path string) (string, error) {
+	return box.Abs(path)
 }
 
 func Close() {
