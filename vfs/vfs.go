@@ -555,7 +555,7 @@ func (fs *FileSystem) Readlink(name string) (string, error) {
 	}
 
 	fs.mtx.RLock()
-	defer fs.mtx.Unlock()
+	defer fs.mtx.RUnlock()
 
 	return fs.symlinks[ino], nil
 }
