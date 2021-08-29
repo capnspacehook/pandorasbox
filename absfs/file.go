@@ -2,8 +2,6 @@ package absfs
 
 import (
 	"io/fs"
-	"os"
-	"syscall"
 )
 
 type File interface {
@@ -52,7 +50,7 @@ type File interface {
 
 	// Stat returns the FileInfo structure describing file. If there is an error,
 	// it will be of type *PathError.
-	Stat() (os.FileInfo, error)
+	Stat() (fs.FileInfo, error)
 
 	// Seek sets the offset for the next Read or Write on file to offset,
 	// interpreted according to whence: 0 means relative to the origin of the
@@ -73,62 +71,4 @@ type File interface {
 	// Close closes the File, rendering it unusable for I/O. It returns an error,
 	// if any.
 	Close() error
-}
-
-// TODO: remove?
-// InvalidFile is a no-op implementation of File that can be returned from any
-// file open methods when an error occurs. InvalidFile mimics the behavior of
-// file handles returnd by the `os` package when there is an error.
-type InvalidFile struct {
-
-	// Path should be the filepath provided to the `Open` method.
-	Path string
-}
-
-func (f *InvalidFile) Name() string {
-	return f.Path
-}
-
-func (f *InvalidFile) Read(p []byte) (int, error) {
-	return 0, &os.PathError{Op: "read", Path: f.Name(), Err: syscall.EBADF}
-}
-
-func (f *InvalidFile) ReadAt(b []byte, off int64) (n int, err error) {
-	return 0, &os.PathError{Op: "read", Path: f.Name(), Err: syscall.EBADF}
-}
-
-func (f *InvalidFile) ReadDir(int) ([]fs.DirEntry, error) {
-	return nil, &os.PathError{Op: "readdir", Path: f.Name(), Err: syscall.EBADF}
-}
-
-func (f *InvalidFile) Write(p []byte) (int, error) {
-	return 0, &os.PathError{Op: "write", Path: f.Name(), Err: syscall.EBADF}
-}
-
-func (f *InvalidFile) WriteAt(b []byte, off int64) (n int, err error) {
-	return 0, &os.PathError{Op: "write", Path: f.Name(), Err: syscall.EBADF}
-}
-
-func (f *InvalidFile) WriteString(s string) (n int, err error) {
-	return 0, &os.PathError{Op: "write", Path: f.Name(), Err: syscall.EBADF}
-}
-
-func (f *InvalidFile) Stat() (os.FileInfo, error) {
-	return nil, &os.PathError{Op: "stat", Path: f.Name(), Err: syscall.EBADF}
-}
-
-func (f *InvalidFile) Seek(offset int64, whence int) (ret int64, err error) {
-	return 0, &os.PathError{Op: "seek", Path: f.Name(), Err: syscall.EBADF}
-}
-
-func (f *InvalidFile) Sync() error {
-	return &os.PathError{Op: "sync", Path: f.Name(), Err: syscall.EBADF}
-}
-
-func (f *InvalidFile) Truncate(size int64) error {
-	return &os.PathError{Op: "truncate", Path: f.Name(), Err: syscall.EBADF}
-}
-
-func (f *InvalidFile) Close() error {
-	return nil
 }

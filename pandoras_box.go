@@ -1,7 +1,7 @@
 package pandorasbox
 
 import (
-	"io"
+	"io/fs"
 	"os"
 
 	"github.com/capnspacehook/pandorasbox/absfs"
@@ -17,7 +17,7 @@ func Open(name string) (absfs.File, error) {
 	return box.Open(name)
 }
 
-func OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
+func OpenFile(name string, flag int, perm fs.FileMode) (absfs.File, error) {
 	return box.OpenFile(name, flag, perm)
 }
 
@@ -25,16 +25,32 @@ func Create(name string) (absfs.File, error) {
 	return box.Create(name)
 }
 
-func Mkdir(name string, perm os.FileMode) error {
+func ReadFile(filename string) ([]byte, error) {
+	return box.ReadFile(filename)
+}
+
+func ReadDir(dirname string) ([]os.DirEntry, error) {
+	return box.ReadDir(dirname)
+}
+
+func WriteFile(filename string, data []byte, perm fs.FileMode) error {
+	return box.WriteFile(filename, data, perm)
+}
+
+func Mkdir(name string, perm fs.FileMode) error {
 	return box.Mkdir(name, perm)
 }
 
-func MkdirAll(name string, perm os.FileMode) error {
+func MkdirAll(name string, perm fs.FileMode) error {
 	return box.MkdirAll(name, perm)
 }
 
-func Stat(name string) (os.FileInfo, error) {
+func Stat(name string) (fs.FileInfo, error) {
 	return box.Stat(name)
+}
+
+func Lstat(name string) (fs.FileInfo, error) {
+	return box.Lstat(name)
 }
 
 func Rename(oldpath, newpath string) error {
@@ -51,6 +67,14 @@ func RemoveAll(path string) error {
 
 func Truncate(name string, size int64) error {
 	return box.Truncate(name, size)
+}
+
+func WalkDir(root string, fn fs.WalkDirFunc) error {
+	return box.WalkDir(root, fn)
+}
+
+func Abs(path string) (string, error) {
+	return box.Abs(path)
 }
 
 func Separator(vfs bool) uint8 {
@@ -75,36 +99,6 @@ func Getwd(vfs bool) (string, error) {
 
 func GetTempDir(vfs bool) string {
 	return box.GetTempDir(vfs)
-}
-
-// io/ioutil methods
-
-func ReadAll(r io.Reader) ([]byte, error) {
-	return box.ReadAll(r)
-}
-
-func ReadFile(filename string) ([]byte, error) {
-	return box.ReadFile(filename)
-}
-
-func WriteFile(filename string, data []byte, perm os.FileMode) error {
-	return box.WriteFile(filename, data, perm)
-}
-
-func ReadDir(dirname string) ([]os.FileInfo, error) {
-	return box.ReadDir(dirname)
-}
-
-func TempFile(dir, prefix string) (absfs.File, error) {
-	return box.TempFile(dir, prefix)
-}
-
-func TempDir(dir, prefix string) (string, error) {
-	return box.TempDir(dir, prefix)
-}
-
-func Abs(path string) (string, error) {
-	return box.Abs(path)
 }
 
 func Close() {
