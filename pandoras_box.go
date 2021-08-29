@@ -13,6 +13,14 @@ func InitGlobalBox() {
 	box = NewBox()
 }
 
+func GlobalOSFS() absfs.FileSystem {
+	return box.osfs
+}
+
+func GlobalVFS() absfs.FileSystem {
+	return box.vfs
+}
+
 func Open(name string) (absfs.File, error) {
 	return box.Open(name)
 }

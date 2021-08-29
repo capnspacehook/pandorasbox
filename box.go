@@ -25,6 +25,14 @@ func NewBox() *Box {
 	return box
 }
 
+func (b *Box) OSFS() absfs.FileSystem {
+	return b.osfs
+}
+
+func (b *Box) VFS() absfs.FileSystem {
+	return b.vfs
+}
+
 func (b *Box) Open(name string) (absfs.File, error) {
 	if vfsName, ok := ConvertVFSPath(name); ok {
 		return b.vfs.Open(vfsName)
