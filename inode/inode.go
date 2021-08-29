@@ -72,13 +72,10 @@ func (n *Ino) NewDir(mode os.FileMode) *Inode {
 	dir := n.New(mode)
 	dir.Mode = os.ModeDir | mode
 
-	var err error
-	err = dir.Link(".", dir)
-	if err != nil {
+	if err := dir.Link(".", dir); err != nil {
 		panic(err)
 	}
-	err = dir.Link("..", dir)
-	if err != nil {
+	if err := dir.Link("..", dir); err != nil {
 		panic(err)
 	}
 

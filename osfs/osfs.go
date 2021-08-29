@@ -8,22 +8,12 @@ import (
 	"github.com/capnspacehook/pandorasbox/absfs"
 )
 
-type stdFS struct{}
+type stdFS struct {
+	pbFS
+}
 
 func (stdFS) Open(name string) (fs.File, error) {
 	return os.Open(name)
-}
-
-func (stdFS) ReadDir(name string) ([]fs.DirEntry, error) {
-	return os.ReadDir(name)
-}
-
-func (stdFS) ReadFile(name string) ([]byte, error) {
-	return os.ReadFile(name)
-}
-
-func (stdFS) StatFS(name string) (fs.FileInfo, error) {
-	return os.Stat(name)
 }
 
 func (stdFS) Sub(dir string) (fs.FS, error) {
