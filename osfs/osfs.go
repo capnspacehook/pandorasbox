@@ -1,97 +1,140 @@
 package osfs
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/capnspacehook/pandorasbox/absfs"
 )
 
-func IsPathSeparator(c uint8) bool {
-	return os.IsPathSeparator(c)
+type stdFS struct{}
+
+func (stdFS) Open(name string) (fs.File, error) {
+	return os.Open(name)
 }
 
-type FileSystem struct{}
-
-func NewFS() *FileSystem {
-	return &FileSystem{}
+func (stdFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	return os.ReadDir(name)
 }
 
-func (fs *FileSystem) Open(name string) (absfs.File, error) {
+func (stdFS) ReadFile(name string) ([]byte, error) {
+	return os.ReadFile(name)
+}
+
+func (stdFS) StatFS(name string) (fs.FileInfo, error) {
+	return os.Stat(name)
+}
+
+func (stdFS) Sub(dir string) (fs.FS, error) {
+	return os.DirFS(dir), nil
+}
+
+type pbFS struct{}
+
+func NewFS() absfs.FileSystem {
+	return pbFS{}
+}
+
+func (pbFS) FS() fs.FS {
+	return stdFS{}
+}
+
+func (pbFS) Open(name string) (absfs.File, error) {
 	f, err := os.Open(name)
 	if err != nil {
 		return nil, err
 	}
 
-	return &File{f: f}, nil
+	return f, nil
 }
 
-func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
+func (pbFS) OpenFile(name string, flag int, perm fs.FileMode) (absfs.File, error) {
 	f, err := os.OpenFile(name, flag, perm)
 	if err != nil {
 		return nil, err
 	}
 
-	return &File{f: f}, err
+	return f, err
 }
 
-func (fs *FileSystem) Create(name string) (absfs.File, error) {
+func (pbFS) Create(name string) (absfs.File, error) {
 	f, err := os.Create(name)
 	if err != nil {
 		return nil, err
 	}
 
-	return &File{f: f}, nil
+	return f, nil
 }
 
-func (fs *FileSystem) Mkdir(name string, perm os.FileMode) error {
+func (pbFS) ReadFile(name string) ([]byte, error) {
+	return os.ReadFile(name)
+}
+
+func (pbFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	return os.ReadDir(name)
+}
+
+func (pbFS) WriteFile(name string, data []byte, perm fs.FileMode) error {
+	return os.WriteFile(name, data, perm)
+}
+
+func (pbFS) Mkdir(name string, perm fs.FileMode) error {
 	return os.Mkdir(name, perm)
 }
 
-func (fs *FileSystem) MkdirAll(name string, perm os.FileMode) error {
+func (pbFS) MkdirAll(name string, perm fs.FileMode) error {
 	return os.MkdirAll(name, perm)
 }
 
-func (fs *FileSystem) Stat(name string) (os.FileInfo, error) {
+func (pbFS) Stat(name string) (fs.FileInfo, error) {
 	return os.Stat(name)
 }
 
-func (fs *FileSystem) Rename(oldpath, newpath string) error {
+func (pbFS) Lstat(name string) (fs.FileInfo, error) {
+	return os.Lstat(name)
+}
+
+func (pbFS) Rename(oldpath, newpath string) error {
 	return os.Rename(oldpath, newpath)
 }
 
-func (fs *FileSystem) Remove(name string) error {
+func (pbFS) Remove(name string) error {
 	return os.Remove(name)
 }
 
-func (fs *FileSystem) RemoveAll(name string) error {
+func (pbFS) RemoveAll(name string) error {
 	return os.RemoveAll(name)
 }
 
-func (fs *FileSystem) Truncate(name string, size int64) error {
+func (pbFS) Truncate(name string, size int64) error {
 	return os.Truncate(name, size)
 }
 
-func (fs *FileSystem) Separator() uint8 {
-	return filepath.Separator
+func (pbFS) WalkDir(root string, fn fs.WalkDirFunc) error {
+	return filepath.WalkDir(root, fn)
 }
 
-func (fs *FileSystem) ListSeparator() uint8 {
-	return filepath.ListSeparator
-}
-
-func (fs *FileSystem) Abs(path string) (string, error) {
+func (pbFS) Abs(path string) (string, error) {
 	return filepath.Abs(path)
 }
 
-func (fs *FileSystem) Chdir(name string) error {
+func (pbFS) Separator() uint8 {
+	return filepath.Separator
+}
+
+func (pbFS) ListSeparator() uint8 {
+	return filepath.ListSeparator
+}
+
+func (pbFS) Chdir(name string) error {
 	return os.Chdir(name)
 }
 
-func (fs *FileSystem) Getwd() (dir string, err error) {
+func (pbFS) Getwd() (dir string, err error) {
 	return os.Getwd()
 }
 
-func (fs *FileSystem) TempDir() string {
+func (pbFS) TempDir() string {
 	return os.TempDir()
 }
