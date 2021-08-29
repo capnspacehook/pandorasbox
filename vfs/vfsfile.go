@@ -3,6 +3,7 @@ package vfs
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,16 +15,15 @@ import (
 	"github.com/awnumar/memguard"
 	"github.com/awnumar/memguard/core"
 
-	"github.com/capnspacehook/pandorasbox/absfs"
 	"github.com/capnspacehook/pandorasbox/inode"
 )
 
 const keySize = 32
 
-type File struct {
+type file struct {
 	mtx sync.RWMutex
 
-	fs *FileSystem
+	fs *pbFS
 
 	name  string
 	flags int
@@ -35,13 +35,13 @@ type File struct {
 }
 
 type sealedFile struct {
-	f *File
+	f *file
 
 	ciphertext []byte
 	key        *memguard.Enclave
 }
 
-func (f *File) updateSize() {
+func (f *file) updateSize() {
 	if len(f.data.ciphertext) == 0 {
 		f.node.Size = 0
 		return
@@ -50,25 +50,22 @@ func (f *File) updateSize() {
 	f.node.Size = int64(len(f.data.ciphertext) - core.Overhead)
 }
 
-func (f *File) Name() string {
+func (f *file) Name() string {
 	return f.name
 }
 
-func (f *File) Read(p []byte) (int, error) {
+func (f *file) Read(p []byte) (int, error) {
 	if f.node == nil {
-		return 0, &os.PathError{Op: "read", Path: f.name, Err: os.ErrClosed}
+		return 0, &fs.PathError{Op: "read", Path: f.name, Err: fs.ErrClosed}
 	}
 	if len(p) == 0 {
 		return 0, nil
 	}
-	if f.flags == 3712 {
-		return 0, io.EOF
+	if f.flags&_O_ACCESS == os.O_WRONLY {
+		return 0, &fs.PathError{Op: "read", Path: f.name, Err: fs.ErrPermission}
 	}
-	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
-		return 0, &os.PathError{Op: "read", Path: f.name, Err: syscall.EBADF} //os.ErrPermission
-	}
-	if f.node.IsDir() && atomic.LoadInt64(&f.node.Size) == 0 {
-		return 0, &os.PathError{Op: "read", Path: f.name, Err: syscall.EISDIR} //os.ErrPermission
+	if f.node.IsDir() {
+		return 0, &fs.PathError{Op: "read", Path: f.name, Err: syscall.EISDIR}
 	}
 	if atomic.LoadInt64(&f.offset) >= atomic.LoadInt64(&f.node.Size) {
 		return 0, io.EOF
@@ -111,16 +108,27 @@ func (f *File) Read(p []byte) (int, error) {
 	}
 	atomic.AddInt64(&f.offset, int64(n))
 
+	if len(p) > n {
+		return n, io.EOF
+	}
+
 	return n, nil
 }
 
-func (f *File) ReadAt(b []byte, off int64) (n int, err error) {
+func (f *file) ReadAt(b []byte, off int64) (n int, err error) {
+	if f.node == nil {
+		return 0, &fs.PathError{Op: "readat", Path: f.name, Err: fs.ErrClosed}
+	}
 	if off < 0 {
-		return 0, &os.PathError{Op: "readat", Path: f.name, Err: errors.New("negative offset")}
+		return 0, &fs.PathError{Op: "readat", Path: f.name, Err: errors.New("negative offset")}
 	}
-	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
-		return 0, os.ErrPermission
+	if f.flags&_O_ACCESS == os.O_WRONLY {
+		return 0, &fs.PathError{Op: "readat", Path: f.name, Err: fs.ErrPermission}
 	}
+	if f.node.IsDir() {
+		return 0, &fs.PathError{Op: "readat", Path: f.name, Err: syscall.EISDIR}
+	}
+
 	// ReadAt shouldn't affect Seek offset
 	curOff := atomic.LoadInt64(&f.offset)
 	atomic.StoreInt64(&f.offset, off)
@@ -129,12 +137,69 @@ func (f *File) ReadAt(b []byte, off int64) (n int, err error) {
 	return f.Read(b)
 }
 
-func (f *File) Write(p []byte) (int, error) {
+func (f *file) ReadDir(n int) ([]fs.DirEntry, error) {
 	if f.node == nil {
-		return 0, &os.PathError{Op: "write", Path: f.name, Err: os.ErrClosed}
+		return nil, &fs.PathError{Op: "readdir", Path: f.name, Err: fs.ErrClosed}
 	}
-	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
-		return 0, &os.PathError{Op: "write", Path: f.name, Err: syscall.EBADF}
+	if f.flags&_O_ACCESS == os.O_WRONLY {
+		return nil, &fs.PathError{Op: "readat", Path: f.name, Err: fs.ErrPermission}
+	}
+	if !f.node.IsDir() {
+		// TODO: is this the correct error?
+		return nil, &fs.PathError{Op: "readdir", Path: f.Name(), Err: syscall.ENOTDIR}
+	}
+
+	f.mtx.Lock()
+	defer f.mtx.Unlock()
+
+	dirs := f.node.Dir
+	if f.diroffset >= len(dirs) {
+		if n <= 0 {
+			return nil, nil
+		}
+		return nil, io.EOF
+	}
+
+	if n <= 0 {
+		// if there are only 2 dirs ('.' and '..'), return
+		// since we are skipping them below
+		if len(dirs) == 2 {
+			return nil, nil
+		}
+		n = len(dirs)
+	}
+	// skip '.' and '..' to retain compatibility with os.ReadDir
+	if f.diroffset == 0 {
+		f.diroffset = 2
+	}
+
+	infosLen := n - f.diroffset
+	if infosLen <= 0 {
+		infosLen = n
+	}
+
+	infos := make([]fs.DirEntry, infosLen)
+	for i, entry := range dirs[f.diroffset:] {
+		if i == n {
+			break
+		}
+
+		infos[i] = &DirEntry{entry.Name, entry.Inode}
+	}
+	f.diroffset += n
+
+	return infos, nil
+}
+
+func (f *file) Write(p []byte) (int, error) {
+	if f.node == nil {
+		return 0, &fs.PathError{Op: "write", Path: f.name, Err: fs.ErrClosed}
+	}
+	if f.flags&_O_ACCESS == os.O_RDONLY {
+		return 0, &fs.PathError{Op: "write", Path: f.name, Err: fs.ErrPermission}
+	}
+	if f.node.IsDir() {
+		return 0, &fs.PathError{Op: "write", Path: f.name, Err: syscall.EISDIR}
 	}
 
 	var (
@@ -190,51 +255,75 @@ func (f *File) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
-	if off < 0 {
-		return 0, &os.PathError{Op: "writeat", Path: f.name, Err: errors.New("negative offset")}
+func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
+	if f.node == nil {
+		return 0, &fs.PathError{Op: "writeat", Path: f.name, Err: fs.ErrClosed}
 	}
-	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
-		return 0, os.ErrPermission
+	if off < 0 {
+		return 0, &fs.PathError{Op: "writeat", Path: f.name, Err: errors.New("negative offset")}
+	}
+	if f.flags&_O_ACCESS == os.O_RDONLY {
+		return 0, fs.ErrPermission
+	}
+	if f.node.IsDir() {
+		return 0, &fs.PathError{Op: "writeat", Path: f.name, Err: syscall.EISDIR}
 	}
 
 	atomic.StoreInt64(&f.offset, off)
 	return f.Write(b)
 }
 
-func (f *File) Close() error {
-	err := f.Sync()
-	if err != nil {
-		return err
-	}
-
-	f.node = nil
-	return nil
+func (f *file) WriteString(s string) (n int, err error) {
+	return f.Write([]byte(s))
 }
 
-func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
-	switch whence {
-	case io.SeekStart:
-		atomic.StoreInt64(&f.offset, offset)
-	case io.SeekCurrent:
-		atomic.AddInt64(&f.offset, offset)
-	case io.SeekEnd:
-		atomic.StoreInt64(&f.offset, atomic.LoadInt64(&f.node.Size)+offset)
+func (f *file) Stat() (os.FileInfo, error) {
+	if f.node == nil {
+		return nil, &fs.PathError{Op: "stat", Path: f.name, Err: fs.ErrClosed}
 	}
-	if f.offset < 0 {
-		atomic.StoreInt64(&f.offset, 0)
-	}
-	return atomic.LoadInt64(&f.offset), nil
-}
 
-func (f *File) Stat() (os.FileInfo, error) {
 	return &FileInfo{filepath.Base(f.name), f.node}, nil
 }
 
-func (f *File) Sync() error {
-	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
+func (f *file) Seek(offset int64, whence int) (int64, error) {
+	if f.node == nil {
+		return 0, &fs.PathError{Op: "seek", Path: f.name, Err: fs.ErrClosed}
+	}
+	if f.node.IsDir() {
+		return 0, &fs.PathError{Op: "seek", Path: f.name, Err: syscall.EISDIR}
+	}
+
+	var ret int64
+	switch whence {
+	case io.SeekStart:
+		if offset < 0 {
+			return 0, &fs.PathError{Op: "seek", Path: f.name, Err: fs.ErrInvalid}
+		}
+
+		atomic.StoreInt64(&f.offset, offset)
+		ret = offset
+	case io.SeekCurrent:
+		if offset < 0 && (atomic.LoadInt64(&f.node.Size)+offset) < 0 {
+			return 0, &fs.PathError{Op: "seek", Path: f.name, Err: fs.ErrInvalid}
+		}
+
+		ret = atomic.AddInt64(&f.offset, offset)
+	case io.SeekEnd:
+		ret = atomic.LoadInt64(&f.node.Size) + offset
+		atomic.StoreInt64(&f.offset, ret)
+	}
+
+	return ret, nil
+}
+
+func (f *file) Sync() error {
+	if f.node == nil {
+		return &fs.PathError{Op: "sync", Path: f.name, Err: fs.ErrClosed}
+	}
+	if f.flags&_O_ACCESS == os.O_RDONLY {
 		return nil
 	}
+
 	f.fs.mtx.Lock()
 	f.fs.data[int(f.node.Ino)] = f.data
 	f.fs.mtx.Unlock()
@@ -242,67 +331,15 @@ func (f *File) Sync() error {
 	return nil
 }
 
-func (f *File) Readdir(n int) ([]os.FileInfo, error) {
-	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
-		return nil, os.ErrPermission
-	}
-	if !f.node.IsDir() {
-		return nil, errors.New("not a directory")
-	}
-
-	f.mtx.Lock()
-	defer f.mtx.Unlock()
-
-	dirs := f.node.Dir
-	if f.diroffset >= len(dirs) {
-		return nil, io.EOF
-	}
-	if n <= 0 {
-		n = len(dirs)
-		f.diroffset = 2
-	}
-	infos := make([]os.FileInfo, n-f.diroffset)
-	for i, entry := range dirs[f.diroffset:n] {
-		infos[i] = &FileInfo{entry.Name, entry.Inode}
-	}
-	f.diroffset += n
-	return infos, nil
-}
-
-func (f *File) Readdirnames(n int) ([]string, error) {
-	var list []string
-	if f.flags&absfs.O_ACCESS == os.O_WRONLY {
-		return list, os.ErrPermission
-	}
-	if !f.node.IsDir() {
-		return list, errors.New("not a directory")
-	}
-
-	f.mtx.Lock()
-	defer f.mtx.Unlock()
-
-	dirs := f.node.Dir
-	if f.diroffset >= len(dirs) {
-		return list, io.EOF
-	}
-	if n <= 0 {
-		n = len(dirs)
-		f.diroffset = 2
-	}
-	list = make([]string, n-f.diroffset)
-	for i, entry := range dirs[f.diroffset:n] {
-		list[i] = entry.Name
-	}
-	f.diroffset += n
-	return list, nil
-}
-
-func (f *File) Truncate(size int64) error {
+func (f *file) Truncate(size int64) error {
 	if f.node == nil {
-		return &os.PathError{Op: "truncate", Path: f.name, Err: os.ErrClosed}
+		return &fs.PathError{Op: "truncate", Path: f.name, Err: fs.ErrClosed}
 	}
-	if f.flags&absfs.O_ACCESS == os.O_RDONLY {
-		return os.ErrPermission
+	if f.flags&_O_ACCESS == os.O_RDONLY {
+		return &fs.PathError{Op: "truncate", Path: f.name, Err: fs.ErrPermission}
+	}
+	if f.node.IsDir() {
+		return &fs.PathError{Op: "truncate", Path: f.name, Err: syscall.EISDIR}
 	}
 
 	f.mtx.Lock()
@@ -357,8 +394,36 @@ func (f *File) Truncate(size int64) error {
 	return nil
 }
 
-func (f *File) WriteString(s string) (n int, err error) {
-	return f.Write([]byte(s))
+func (f *file) Close() error {
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	f.mtx.Lock()
+	f.node = nil
+	f.mtx.Unlock()
+
+	return nil
+}
+
+type DirEntry struct {
+	name string
+	node *inode.Inode
+}
+
+func (d *DirEntry) Name() string {
+	return d.name
+}
+
+func (d *DirEntry) IsDir() bool {
+	return d.node.Mode.IsDir()
+}
+
+func (d *DirEntry) Type() fs.FileMode {
+	return d.node.Mode.Type()
+}
+
+func (d *DirEntry) Info() (fs.FileInfo, error) {
+	return &FileInfo{name: d.name, node: d.node}, nil
 }
 
 type FileInfo struct {
@@ -374,18 +439,18 @@ func (i *FileInfo) Size() int64 {
 	return i.node.Size
 }
 
-func (i *FileInfo) ModTime() time.Time {
-	return i.node.Mtime
-}
-
 func (i *FileInfo) Mode() os.FileMode {
 	return i.node.Mode
 }
 
-func (i *FileInfo) Sys() interface{} {
-	return i.node
+func (i *FileInfo) ModTime() time.Time {
+	return i.node.Mtime
 }
 
 func (i *FileInfo) IsDir() bool {
 	return i.node.IsDir()
+}
+
+func (i *FileInfo) Sys() interface{} {
+	return i.node
 }
