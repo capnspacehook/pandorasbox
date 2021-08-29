@@ -3,6 +3,7 @@ package inode
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	filepath "path" // force forward slash separators on all OSs
 	"sort"
@@ -18,7 +19,7 @@ type Inode struct {
 	sync.RWMutex
 
 	Ino   uint64
-	Mode  os.FileMode
+	Mode  fs.FileMode
 	Nlink uint64
 	Size  int64
 
@@ -38,6 +39,7 @@ func (e *DirEntry) IsDir() bool {
 	if e.Inode == nil {
 		return false
 	}
+
 	return e.Inode.IsDir()
 }
 
@@ -150,7 +152,7 @@ func (n *Inode) UnlinkAll() {
 }
 
 func (n *Inode) IsDir() bool {
-	return os.ModeDir&n.Mode != 0
+	return n.Mode&fs.ModeDir != 0
 }
 
 func (n *Inode) Rename(oldpath, newpath string) error {
@@ -172,7 +174,7 @@ func (n *Inode) Rename(oldpath, newpath string) error {
 	if err == nil && tnode.IsDir() {
 		return syscall.EEXIST
 	}
-	if (err == nil && !tnode.IsDir()) || (err != nil && os.IsNotExist(err)) {
+	if (err == nil && !tnode.IsDir()) || (err != nil && errors.Is(err, fs.ErrNotExist)) {
 		var tdir string
 		tdir, rename = filepath.Split(newpath)
 		tdir = filepath.Clean(tdir)
