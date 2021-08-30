@@ -13,8 +13,8 @@ type FileSystem interface {
 	Open(name string) (File, error)
 
 	// OpenFile is the generalized open call; most users will use Open or
-	// Create instead. It opens the named file with specified flag (O_RDONLY etc.).
-	// If the file does not exist, and the O_CREATE flag is passed, it is created
+	// Create instead. It opens the named file with specified flag (os.O_RDONLY etc.).
+	// If the file does not exist, and the os.O_CREATE flag is passed, it is created
 	// with mode perm (before umask). If successful, methods on the returned File
 	// can be used for I/O. If there is an error, it will be of type *fs.PathError.
 	OpenFile(name string, flag int, perm fs.FileMode) (File, error)
@@ -58,7 +58,7 @@ type FileSystem interface {
 	// Lstat returns a FileInfo describing the named file.
 	// If the file is a symbolic link, the returned FileInfo
 	// describes the symbolic link. Lstat makes no attempt to follow the link.
-	// If there is an error, it will be of type *PathError.
+	// If there is an error, it will be of type *fs.PathError.
 	Lstat(name string) (fs.FileInfo, error)
 
 	// Rename renames (moves) oldpath to newpath. If newpath already exists and
@@ -88,13 +88,29 @@ type FileSystem interface {
 	// or may not be walked in lexical order.
 	WalkDir(root string, fn fs.WalkDirFunc) error
 
-	// TODO: add docs
+	// Abs returns an absolute representation of path.
+	// If the path is not absolute it will be joined with the current
+	// working directory to turn it into an absolute path. The absolute
+	// path name for a given file is not guaranteed to be unique.
+	// Abs calls pandorasbox.Clean on the result.
 	Abs(path string) (string, error)
+
 	Separator() uint8
 	ListSeparator() uint8
-	// IsPathSeparator
+
+	// Chdir changes the current working directory to the named directory.
+	// If there is an error, it will be of type *fs.PathError.
 	Chdir(dir string) error
+
+	// Getwd returns a rooted path name corresponding to the
+	// current directory. If the current directory can be
+	// reached via multiple paths (due to symbolic links),
+	// Getwd may return any one of them.
 	Getwd() (dir string, err error)
+
+	// TempDir returns the default directory to use for temporary files.
+	// The directory is neither guaranteed to exist nor have accessible
+	// permissions.
 	TempDir() string
 
 	// TODO: add all *Temp functions

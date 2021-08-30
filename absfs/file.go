@@ -65,7 +65,7 @@ type File interface {
 	Sync() error
 
 	// Truncate changes the size of the file. It does not change the I/O offset.
-	// If there is an error, it will be of type *PathError.
+	// If there is an error, it will be of type *fs.PathError.
 	Truncate(size int64) error
 
 	// Close closes the File, rendering it unusable for I/O. It returns an error,
