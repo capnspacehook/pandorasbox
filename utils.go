@@ -28,12 +28,15 @@ func IsVFSPath(path string) bool {
 }
 
 func MakeVFSPath(path string) string {
-	vfsPath := strings.Replace(path, "/", VFSPrefix, 1)
-	if vfsPath == path {
-		vfsPath = VFSPrefix + path
+	if IsVFSPath(path) {
+		return path
 	}
 
-	return vfsPath
+	if len(path) > 0 && path[0] != '/' {
+		return VFSPrefix + path
+	}
+
+	return strings.Replace(path, "/", VFSPrefix, 1)
 }
 
 func IsVFS(fi fs.FileInfo) bool {
