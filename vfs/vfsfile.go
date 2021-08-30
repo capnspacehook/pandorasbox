@@ -55,6 +55,13 @@ func (f *file) Name() string {
 }
 
 func (f *file) Read(p []byte) (int, error) {
+	n, err := f.read(p, atomic.LoadInt64(&f.offset))
+	atomic.AddInt64(&f.offset, int64(n))
+
+	return n, err
+}
+
+func (f *file) read(p []byte, offset int64) (int, error) {
 	if f.node == nil {
 		return 0, &fs.PathError{Op: "read", Path: f.name, Err: fs.ErrClosed}
 	}
@@ -67,7 +74,7 @@ func (f *file) Read(p []byte) (int, error) {
 	if f.node.IsDir() {
 		return 0, &fs.PathError{Op: "read", Path: f.name, Err: syscall.EISDIR}
 	}
-	if atomic.LoadInt64(&f.offset) >= atomic.LoadInt64(&f.node.Size) {
+	if offset >= atomic.LoadInt64(&f.node.Size) {
 		return 0, io.EOF
 	}
 
@@ -96,7 +103,6 @@ func (f *file) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	offset := int(atomic.LoadInt64(&f.offset))
 	core.Copy(p, plaintext[offset:])
 	core.Wipe(plaintext)
 
@@ -106,7 +112,6 @@ func (f *file) Read(p []byte) (int, error) {
 	} else {
 		n = len(plaintext[offset:])
 	}
-	atomic.AddInt64(&f.offset, int64(n))
 
 	if len(p) > n {
 		return n, io.EOF
@@ -129,12 +134,7 @@ func (f *file) ReadAt(b []byte, off int64) (n int, err error) {
 		return 0, &fs.PathError{Op: "readat", Path: f.name, Err: syscall.EISDIR}
 	}
 
-	// ReadAt shouldn't affect Seek offset
-	curOff := atomic.LoadInt64(&f.offset)
-	atomic.StoreInt64(&f.offset, off)
-	defer atomic.StoreInt64(&f.offset, curOff)
-
-	return f.Read(b)
+	return f.read(b, off)
 }
 
 func (f *file) ReadDir(n int) ([]fs.DirEntry, error) {
@@ -192,6 +192,13 @@ func (f *file) ReadDir(n int) ([]fs.DirEntry, error) {
 }
 
 func (f *file) Write(p []byte) (int, error) {
+	n, err := f.write(p, atomic.LoadInt64(&f.offset))
+	atomic.AddInt64(&f.offset, int64(n))
+
+	return n, err
+}
+
+func (f *file) write(p []byte, offset int64) (int, error) {
 	if f.node == nil {
 		return 0, &fs.PathError{Op: "write", Path: f.name, Err: fs.ErrClosed}
 	}
@@ -223,8 +230,7 @@ func (f *file) Write(p []byte) (int, error) {
 	}
 
 	data := plaintext
-	offset := int(atomic.LoadInt64(&f.offset))
-	size := len(p) + offset
+	size := len(p) + int(offset)
 	if int64(size) > f.node.Size {
 		data = make([]byte, size)
 		core.Copy(data, plaintext)
@@ -250,7 +256,6 @@ func (f *file) Write(p []byte) (int, error) {
 	} else {
 		n = len(data[offset:])
 	}
-	atomic.AddInt64(&f.offset, int64(n))
 
 	return n, nil
 }
@@ -269,8 +274,7 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 		return 0, &fs.PathError{Op: "writeat", Path: f.name, Err: syscall.EISDIR}
 	}
 
-	atomic.StoreInt64(&f.offset, off)
-	return f.Write(b)
+	return f.write(b, off)
 }
 
 func (f *file) WriteString(s string) (n int, err error) {
