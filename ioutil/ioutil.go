@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// TODO: remove package
+
 // Package github.com/capnspacehook/pandorasbox/ioutil implements
 // the standard library ioutil functions for the absfs.FileSystem interface.
 package ioutil
@@ -9,6 +11,7 @@ package ioutil
 import (
 	"bytes"
 	"io"
+	"io/fs"
 	"os"
 	"sort"
 	"sync"
@@ -93,12 +96,12 @@ func WriteFile(fs absfs.FileSystem, filename string, data []byte, perm os.FileMo
 
 // ReadDir reads the directory named by dirname from the absfs.FileSystem fs
 // and returns a list of directory entries sorted by filename.
-func ReadDir(fs absfs.FileSystem, dirname string) ([]os.FileInfo, error) {
+func ReadDir(fs absfs.FileSystem, dirname string) ([]fs.DirEntry, error) {
 	f, err := fs.Open(dirname)
 	if err != nil {
 		return nil, err
 	}
-	list, err := f.Readdir(-1)
+	list, err := f.ReadDir(-1)
 	f.Close()
 	if err != nil {
 		return nil, err
