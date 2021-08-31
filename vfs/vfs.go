@@ -2,13 +2,14 @@ package vfs
 
 import (
 	"errors"
+	"io"
+	stdfs "io/fs"
 	"os"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/awnumar/fastrand"
 	"github.com/awnumar/memguard"
@@ -21,147 +22,137 @@ import (
 const (
 	PathSeparator     = '/'
 	PathListSeparator = ':'
+
+	tempDir = "/tmp"
+
+	_O_ACCESS = 0x3 // masks the access mode (os.O_RDONLY, os.O_WRONLY, or os.O_RDWR)
 )
 
-func IsPathSeparator(c uint8) bool {
-	return PathSeparator == c
+type stdFS struct {
+	*pbFS
 }
 
-type FileSystem struct {
-	mtx sync.RWMutex
+func (fs stdFS) Open(name string) (stdfs.File, error) {
+	if err := checkPath(name, "open"); err != nil {
+		return nil, err
+	}
 
-	Umask   os.FileMode
-	Tempdir string
+	return fs.pbFS.Open(name)
+}
+
+func (fs stdFS) ReadDir(name string) ([]stdfs.DirEntry, error) {
+	if err := checkPath(name, "open"); err != nil {
+		return nil, err
+	}
+
+	return fs.pbFS.ReadDir(name)
+}
+
+func (fs stdFS) ReadFile(name string) ([]byte, error) {
+	if err := checkPath(name, "open"); err != nil {
+		return nil, err
+	}
+
+	return fs.pbFS.ReadFile(name)
+}
+
+func (fs stdFS) StatFS(name string) (stdfs.FileInfo, error) {
+	if err := checkPath(name, "stat"); err != nil {
+		return nil, err
+	}
+
+	return fs.pbFS.Stat(name)
+}
+
+func checkPath(name, op string) error {
+	if path.IsAbs(name) {
+		// if the name starts with a slash, return an error
+		// to remain compatible with io/fs
+		return &stdfs.PathError{Op: op, Path: name, Err: stdfs.ErrInvalid}
+	}
+
+	return nil
+}
+
+type pbFS struct {
+	mtx *sync.RWMutex
 
 	root *inode.Inode
 	cwd  string
 	dir  *inode.Inode
 	ino  *inode.Ino
 
-	symlinks map[uint64]string
-	data     []*sealedFile
+	data []*sealedFile
 }
 
-func NewFS() *FileSystem {
-	fs := new(FileSystem)
+func NewFS() absfs.FileSystem {
+	fs := new(pbFS)
+	fs.mtx = new(sync.RWMutex)
 	fs.ino = new(inode.Ino)
-	fs.Tempdir = "/tmp"
 
-	fs.Umask = 0755
-	fs.root = fs.ino.NewDir(fs.Umask)
+	fs.root = fs.ino.NewDir(0755)
 	fs.cwd = "/"
 	fs.dir = fs.root
 	fs.data = make([]*sealedFile, 2)
-	fs.symlinks = make(map[uint64]string)
 
 	return fs
 }
 
-func (fs *FileSystem) Separator() uint8 {
-	return PathSeparator
-}
-
-func (fs *FileSystem) ListSeparator() uint8 {
-	return PathListSeparator
-}
-
-func (fs *FileSystem) Abs(path string) (string, error) {
-	if strings.HasPrefix(path, string(PathSeparator)) {
-		return Clean(path), nil
-	}
-	wd, err := fs.Getwd()
-	if err != nil {
-		return "", err
-	}
-	return Join(wd, path), nil
-}
-
-func (fs *FileSystem) Rename(oldpath, newpath string) error {
-	linkErr := &os.LinkError{
-		Op:  "rename",
-		Old: oldpath,
-		New: newpath,
-	}
-	if oldpath == "/" {
-		linkErr.Err = errors.New("the root folder may not be moved or renamed")
-		return linkErr
-	}
-
-	if !IsAbs(oldpath) {
-		oldpath = Join(fs.cwd, oldpath)
-	}
-
-	if !IsAbs(newpath) {
-		newpath = Join(fs.cwd, newpath)
-	}
-	err := fs.root.Rename(oldpath, newpath)
-	if err != nil {
-		linkErr.Err = err
-		return linkErr
-	}
-	return nil
-}
-
-func (fs *FileSystem) Chdir(name string) (err error) {
-	fs.mtx.Lock()
-	defer fs.mtx.Unlock()
-
-	if name == "/" {
-		fs.cwd = "/"
-		fs.dir = fs.root
-		return nil
-	}
-	wd := fs.root
-	cwd := name
-	if !IsAbs(name) {
-		cwd = Join(fs.cwd, name)
-		wd = fs.dir
-	}
-
-	node, err := wd.Resolve(name)
-	if err != nil {
-		return &os.PathError{Op: "chdir", Path: name, Err: err}
-	}
-	if !node.IsDir() {
-		return &os.PathError{Op: "chdir", Path: name, Err: errors.New("not a directory")}
-	}
-
-	fs.cwd = cwd
-	fs.dir = node
-	return nil
-}
-
-func (fs *FileSystem) Getwd() (dir string, err error) {
+func (fs *pbFS) FS() stdfs.FS {
 	fs.mtx.RLock()
 	defer fs.mtx.RUnlock()
 
-	return fs.cwd, nil
+	// set cwd to root, as paths are not allowed to start with a slash
+	// in io/fs filesystems
+	return stdFS{pbFS: &pbFS{
+		mtx:  fs.mtx,
+		root: fs.root,
+		cwd:  "/",
+		dir:  fs.dir,
+		ino:  fs.ino,
+		data: fs.data,
+	}}
 }
 
-func (fs *FileSystem) TempDir() string {
-	fs.mtx.RLock()
-	defer fs.mtx.RUnlock()
-
-	return fs.Tempdir
-}
-
-func (fs *FileSystem) Open(name string) (absfs.File, error) {
+func (fs *pbFS) Open(name string) (absfs.File, error) {
 	return fs.OpenFile(name, os.O_RDONLY, 0)
 }
 
-func (fs *FileSystem) Create(name string) (absfs.File, error) {
-	return fs.OpenFile(name, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
-}
-
-func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
+func (fs *pbFS) OpenFile(name string, flag int, perm stdfs.FileMode) (absfs.File, error) {
 	if name == "/" {
 		data := fs.data[int(fs.root.Ino)]
-		return &File{fs: fs, name: name, flags: flag, node: fs.root, data: data}, nil
+		return &file{
+			fs:    fs,
+			name:  name,
+			flags: flag,
+			node:  fs.root,
+			data:  data,
+		}, nil
 	}
-	appendFile := flag&absfs.O_APPEND != 0
+
+	// check that the path is valid
+	var validPath bool
+	if len(name) > 1 && name[0] == '/' {
+		// if the path starts with a slash, don't call io/fs.ValidPath
+		// with the leading slash, as we accept that but io/fs doesn't
+		validPath = stdfs.ValidPath(name[1:])
+	} else {
+		validPath = stdfs.ValidPath(name)
+	}
+	if !validPath {
+		return nil, &stdfs.PathError{Op: "open", Path: name, Err: stdfs.ErrInvalid}
+	}
+
+	appendFile := flag&os.O_APPEND != 0
 	if name == "." {
 		data := fs.data[int(fs.dir.Ino)]
-		file := &File{fs: fs, name: name, flags: flag, node: fs.dir, data: data}
+		file := &file{
+			fs:    fs,
+			name:  name,
+			flags: flag,
+			node:  fs.dir,
+			data:  data,
+		}
 		if data != nil {
 			if appendFile {
 				file.offset = fs.dir.Size
@@ -173,7 +164,7 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 	}
 
 	wd := fs.root
-	if !IsAbs(name) {
+	if !path.IsAbs(name) {
 		wd = fs.dir
 	}
 	var exists bool
@@ -182,29 +173,29 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 		exists = true
 	}
 
-	dir, filename := Split(name)
-	dir = Clean(dir)
+	dir, filename := path.Split(name)
+	dir = path.Clean(dir)
 	parent, err := wd.Resolve(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	access := flag & absfs.O_ACCESS
-	create := flag&absfs.O_CREATE != 0
-	truncate := flag&absfs.O_TRUNC != 0
+	access := flag & _O_ACCESS
+	create := flag&os.O_CREATE != 0
+	truncate := flag&os.O_TRUNC != 0
 
 	// error if it does not exist, and we are not allowed to create it.
 	if !exists && !create {
-		return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.ENOENT}
+		return nil, &stdfs.PathError{Op: "open", Path: name, Err: syscall.ENOENT}
 	}
 	if exists {
 		// err if exclusive create is required
 		if create && flag&os.O_EXCL != 0 {
-			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.EEXIST}
+			return nil, &stdfs.PathError{Op: "open", Path: name, Err: stdfs.ErrExist}
 		}
 		if node.IsDir() {
 			if access != os.O_RDONLY || truncate {
-				return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.EISDIR} // os.ErrNotExist}
+				return nil, &stdfs.PathError{Op: "open", Path: name, Err: syscall.EISDIR}
 			}
 		}
 
@@ -214,32 +205,30 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 			sfile.ciphertext = nil
 			sfile.key = nil
 		}
-	} else { // !exists
+	} else {
 		// error if we cannot create the file
 		if !create {
-			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: syscall.ENOENT} //os.ErrNotExist}
+			return nil, &stdfs.PathError{Op: "open", Path: name, Err: syscall.ENOENT}
 		}
 
 		// Create write-able file
-		node = fs.ino.New(fs.Umask & perm)
+		node = fs.ino.New(perm)
 		err := parent.Link(filename, node)
 		if err != nil {
 			fs.ino.SubIno()
-			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: err}
+			return nil, &stdfs.PathError{Op: "open", Path: name, Err: err}
 		}
-		fs.data = append(fs.data, &sealedFile{})
+		fs.data = append(fs.data, new(sealedFile))
 	}
 	data := fs.data[int(node.Ino)]
 
-	if !create {
-		if access == os.O_RDONLY && node.Mode&absfs.OS_ALL_R == 0 ||
-			access == os.O_WRONLY && node.Mode&absfs.OS_ALL_W == 0 ||
-			access == os.O_RDWR && node.Mode&(absfs.OS_ALL_W|absfs.OS_ALL_R) == 0 {
-			return &absfs.InvalidFile{name}, &os.PathError{Op: "open", Path: name, Err: os.ErrPermission}
-		}
+	file := &file{
+		fs:    fs,
+		name:  name,
+		flags: flag,
+		node:  node,
+		data:  data,
 	}
-
-	file := &File{fs: fs, name: name, flags: flag, node: node, data: data}
 	if data != nil {
 		if truncate {
 			node.Size = 0
@@ -253,9 +242,239 @@ func (fs *FileSystem) OpenFile(name string, flag int, perm os.FileMode) (absfs.F
 	return file, nil
 }
 
-func (fs *FileSystem) Truncate(name string, size int64) error {
+func (fs *pbFS) Create(name string) (absfs.File, error) {
+	return fs.OpenFile(name, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
+}
+
+func (fs *pbFS) ReadFile(name string) ([]byte, error) {
+	f, err := fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	// will never error
+	fi, _ := f.Stat()
+
+	data := make([]byte, fi.Size())
+	n, err := f.Read(data)
+	if err == nil && n < len(data) {
+		err = io.ErrShortWrite
+	}
+	if err1 := f.Close(); err == nil {
+		err = err1
+	}
+
+	return data, err
+}
+
+func (fs *pbFS) ReadDir(name string) ([]stdfs.DirEntry, error) {
+	f, err := fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	dirs, err := f.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name() < dirs[j].Name() })
+
+	return dirs, nil
+}
+
+func (fs *pbFS) WriteFile(name string, data []byte, perm os.FileMode) error {
+	f, err := fs.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	n, err := f.Write(data)
+	if err == nil && n < len(data) {
+		err = io.ErrShortWrite
+	}
+	if err1 := f.Close(); err == nil {
+		err = err1
+	}
+
+	return err
+}
+
+func (fs *pbFS) Mkdir(name string, perm stdfs.FileMode) error {
+	fs.mtx.Lock()
+	defer fs.mtx.Unlock()
+
+	wd := fs.root
+	abs := name
+	if !path.IsAbs(abs) {
+		abs = path.Join(fs.cwd, abs)
+		wd = fs.dir
+	}
+	_, err := wd.Resolve(name)
+	if err == nil {
+		return &stdfs.PathError{Op: "mkdir", Path: name, Err: stdfs.ErrExist}
+	}
+
+	parent := fs.root
+	dir, filename := path.Split(abs)
+	dir = path.Clean(dir)
+	if dir != "/" {
+		parent, err = fs.root.Resolve(strings.TrimLeft(dir, "/"))
+		if err != nil {
+			return &stdfs.PathError{Op: "mkdir", Path: dir, Err: err}
+		}
+	}
+
+	child := fs.ino.NewDir(perm)
+	parent.Link(filename, child)
+	child.Link("..", parent)
+	fs.data = append(fs.data, new(sealedFile))
+
+	return nil
+}
+
+func (fs *pbFS) MkdirAll(name string, perm stdfs.FileMode) error {
+	fs.mtx.RLock()
+	name = inode.Abs(fs.cwd, name)
+	fs.mtx.RUnlock()
+
+	dirpath := ""
+	for _, p := range strings.Split(name, string(fs.Separator())) {
+		if p == "" {
+			p = "/"
+		}
+
+		dirpath = path.Join(dirpath, p)
+		if err := fs.Mkdir(dirpath, perm); err != nil {
+			if !errors.Is(err, stdfs.ErrExist) {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (fs *pbFS) Stat(name string) (stdfs.FileInfo, error) {
+	if name == "/" {
+		return &FileInfo{"/", fs.root}, nil
+	}
+	node, err := fs.fileStat(fs.cwd, name)
+	if err != nil {
+		return nil, err
+	}
+
+	return &FileInfo{path.Base(name), node}, nil
+}
+
+func (fs *pbFS) fileStat(cwd, name string) (*inode.Inode, error) {
+	name = inode.Abs(cwd, name)
+	if name != "/" {
+		name = strings.TrimLeft(name, "/")
+	}
+	node, err := fs.root.Resolve(name)
+	if err != nil {
+		return nil, &stdfs.PathError{Op: "stat", Path: name, Err: err}
+	}
+
+	return node, nil
+}
+
+func (fs *pbFS) Lstat(name string) (stdfs.FileInfo, error) {
+	return fs.Stat(name)
+}
+
+func (fs *pbFS) Rename(oldpath, newpath string) error {
+	linkErr := os.LinkError{
+		Op:  "rename",
+		Old: oldpath,
+		New: newpath,
+	}
+
+	if oldpath == "/" {
+		linkErr.Err = errors.New("the root folder may not be moved or renamed")
+		return &linkErr
+	}
+
+	if !path.IsAbs(oldpath) {
+		oldpath = path.Join(fs.cwd, oldpath)
+	}
+
+	if !path.IsAbs(newpath) {
+		newpath = path.Join(fs.cwd, newpath)
+	}
+	err := fs.root.Rename(oldpath, newpath)
+	if err != nil {
+		linkErr.Err = err
+		return &linkErr
+	}
+
+	return nil
+}
+
+func (fs *pbFS) Remove(name string) (err error) {
+	wd := fs.root
+	abs := name
+	if !path.IsAbs(abs) {
+		abs = path.Join(fs.cwd, abs)
+		wd = fs.dir
+	}
+
+	child, err := wd.Resolve(name)
+	if err != nil {
+		return &stdfs.PathError{Op: "remove", Path: name, Err: err}
+	}
+
+	if child.IsDir() {
+		if len(child.Dir) > 2 {
+			return &stdfs.PathError{Op: "remove", Path: name, Err: errors.New("directory not empty")}
+		}
+	}
+
+	parent := fs.root
+	dir, filename := path.Split(abs)
+	dir = path.Clean(dir)
+	if dir != "/" {
+		parent, err = fs.root.Resolve(strings.TrimLeft(dir, "/"))
+		if err != nil {
+			return &stdfs.PathError{Op: "remove", Path: dir, Err: err}
+		}
+	}
+
+	return parent.Unlink(filename)
+}
+
+func (fs *pbFS) RemoveAll(name string) error {
+	wd := fs.root
+	abs := name
+	if !path.IsAbs(abs) {
+		abs = path.Join(fs.cwd, abs)
+		wd = fs.dir
+	}
+
+	child, err := wd.Resolve(name)
+	if err != nil {
+		return &stdfs.PathError{Op: "remove", Path: name, Err: err}
+	}
+
+	parent := fs.root
+	dir, filename := path.Split(abs)
+	dir = path.Clean(dir)
+	if dir != "/" {
+		parent, err = fs.root.Resolve(strings.TrimLeft(dir, "/"))
+		if err != nil {
+			return &stdfs.PathError{Op: "remove", Path: dir, Err: err}
+		}
+	}
+
+	child.UnlinkAll()
+
+	return parent.Unlink(filename)
+}
+
+func (fs *pbFS) Truncate(name string, size int64) error {
 	if size < 0 {
-		return &os.PathError{Op: "truncate", Path: name, Err: os.ErrClosed}
+		return &stdfs.PathError{Op: "truncate", Path: name, Err: stdfs.ErrClosed}
 	}
 
 	path := inode.Abs(fs.cwd, name)
@@ -263,6 +482,7 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 	if err != nil {
 		return err
 	}
+
 	fs.mtx.RLock()
 	file := fs.data[child.Ino]
 	fs.mtx.RUnlock()
@@ -274,11 +494,13 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 		if err != nil {
 			return err
 		}
+
 		plaintext = make([]byte, file.f.node.Size)
 		_, err = core.Decrypt(file.ciphertext, key.Bytes(), plaintext)
 		if err != nil {
 			return err
 		}
+
 		key.Destroy()
 		file.f.mtx.RUnlock()
 	} else if size == 0 { // data is already nil, no-op
@@ -322,334 +544,78 @@ func (fs *FileSystem) Truncate(name string, size int64) error {
 	return nil
 }
 
-func (fs *FileSystem) Mkdir(name string, perm os.FileMode) error {
+func (fs *pbFS) WalkDir(root string, fn stdfs.WalkDirFunc) error {
+	if path.IsAbs(root) {
+		if root == "/" {
+			root = "."
+		} else {
+			root = root[1:]
+		}
+	}
+
+	return stdfs.WalkDir(fs.FS(), root, fn)
+}
+
+func (fs *pbFS) Abs(p string) (string, error) {
+	if strings.HasPrefix(p, string(PathSeparator)) {
+		return path.Clean(p), nil
+	}
+
+	wd, err := fs.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	return path.Join(wd, p), nil
+}
+
+func (fs *pbFS) Separator() uint8 {
+	return PathSeparator
+}
+
+func (fs *pbFS) ListSeparator() uint8 {
+	return PathListSeparator
+}
+
+func (fs *pbFS) Chdir(name string) (err error) {
 	fs.mtx.Lock()
 	defer fs.mtx.Unlock()
 
-	wd := fs.root
-	abs := name
-	if !IsAbs(abs) {
-		abs = Join(fs.cwd, abs)
-		wd = fs.dir
-	}
-	_, err := wd.Resolve(name)
-	if err == nil {
-		return &os.PathError{Op: "mkdir", Path: name, Err: os.ErrExist}
-	}
-
-	parent := fs.root
-	dir, filename := Split(abs)
-	dir = Clean(dir)
-	if dir != "/" {
-		parent, err = fs.root.Resolve(strings.TrimLeft(dir, "/"))
-		if err != nil {
-			return &os.PathError{Op: "mkdir", Path: dir, Err: err}
-		}
-	}
-
-	child := fs.ino.NewDir(fs.Umask & perm)
-	parent.Link(filename, child)
-	child.Link("..", parent)
-	fs.data = append(fs.data, &sealedFile{})
-
-	return nil
-}
-
-func (fs *FileSystem) MkdirAll(name string, perm os.FileMode) error {
-	fs.mtx.RLock()
-	name = inode.Abs(fs.cwd, name)
-	fs.mtx.RUnlock()
-	path := ""
-	for _, p := range strings.Split(name, string(fs.Separator())) {
-		if p == "" {
-			p = "/"
-		}
-		path = Join(path, p)
-		fs.Mkdir(path, perm)
-	}
-
-	return nil
-}
-
-func (fs *FileSystem) Remove(name string) (err error) {
-	wd := fs.root
-	abs := name
-	if !IsAbs(abs) {
-		abs = Join(fs.cwd, abs)
-		wd = fs.dir
-	}
-	child, err := wd.Resolve(name)
-	if err != nil {
-		return &os.PathError{Op: "remove", Path: name, Err: err}
-	}
-
-	if child.IsDir() {
-		if len(child.Dir) > 2 {
-			return &os.PathError{Op: "remove", Path: name, Err: errors.New("directory not empty")}
-		}
-	}
-
-	parent := fs.root
-	dir, filename := Split(abs)
-	dir = Clean(dir)
-	if dir != "/" {
-		parent, err = fs.root.Resolve(strings.TrimLeft(dir, "/"))
-		if err != nil {
-			return &os.PathError{Op: "remove", Path: dir, Err: err}
-		}
-	}
-
-	return parent.Unlink(filename)
-}
-
-func (fs *FileSystem) RemoveAll(name string) error {
-	wd := fs.root
-	abs := name
-	if !IsAbs(abs) {
-		abs = Join(fs.cwd, abs)
-		wd = fs.dir
-	}
-	child, err := wd.Resolve(name)
-	if err != nil {
-		return &os.PathError{Op: "remove", Path: name, Err: err}
-	}
-
-	parent := fs.root
-	dir, filename := Split(abs)
-	dir = Clean(dir)
-	if dir != "/" {
-		parent, err = fs.root.Resolve(strings.TrimLeft(dir, "/"))
-		if err != nil {
-			return &os.PathError{Op: "remove", Path: dir, Err: err}
-		}
-	}
-	child.UnlinkAll()
-	return parent.Unlink(filename)
-}
-
-//Chtimes changes the access and modification times of the named file
-func (fs *FileSystem) Chtimes(name string, atime time.Time, mtime time.Time) error {
-	var err error
-	node := fs.root
-
-	name = inode.Abs(fs.cwd, name)
-	if name != "/" {
-		node, err = fs.root.Resolve(strings.TrimLeft(name, "/"))
-		if err != nil {
-			return err
-		}
-	}
-
-	node.Atime = atime
-	node.Mtime = mtime
-
-	return nil
-}
-
-//Chown changes the owner and group ids of the named file
-func (fs *FileSystem) Chown(name string, uid, gid int) error {
-	var err error
-	node := fs.root
-
-	name = inode.Abs(fs.cwd, name)
-	if name != "/" {
-		node, err = fs.root.Resolve(name)
-		if err != nil {
-			return err
-		}
-	}
-	node.Uid = uint32(uid)
-	node.Gid = uint32(gid)
-
-	return nil
-}
-
-//Chmod changes the mode of the named file to mode.
-func (fs *FileSystem) Chmod(name string, mode os.FileMode) error {
-	var err error
-	node := fs.root
-
-	name = inode.Abs(fs.cwd, name)
-
-	// return nil
-	if name != "/" {
-		node, err = fs.root.Resolve(strings.TrimLeft(name, "/"))
-		if err != nil {
-			return err
-		}
-	}
-	node.Mode = mode
-
-	return nil
-}
-
-// TODO: Avoid cyclical links
-func (fs *FileSystem) fileStat(cwd, name string) (*inode.Inode, error) {
-	name = inode.Abs(cwd, name)
-	if name != "/" {
-		name = strings.TrimLeft(name, "/")
-	}
-	node, err := fs.root.Resolve(name)
-	if err != nil {
-		return nil, &os.PathError{Op: "stat", Path: name, Err: err}
-	}
-
-	if node.Mode&os.ModeSymlink == 0 {
-		return node, nil
-	}
-	return fs.fileStat(Dir(name), fs.symlinks[node.Ino])
-}
-
-func (fs *FileSystem) Stat(name string) (os.FileInfo, error) {
 	if name == "/" {
-		return &FileInfo{"/", fs.root}, nil
-	}
-	node, err := fs.fileStat(fs.cwd, name)
-	if err != nil {
-		return nil, err
-	}
-
-	return &FileInfo{Base(name), node}, nil
-}
-
-func (fs *FileSystem) Lstat(name string) (os.FileInfo, error) {
-	if name == "/" {
-		return &FileInfo{"/", fs.root}, nil
-	}
-	name = inode.Abs(fs.cwd, name)
-	node, err := fs.root.Resolve(strings.TrimLeft(name, "/"))
-	if err != nil {
-		return nil, &os.PathError{Op: "remove", Path: name, Err: err}
-	}
-
-	return &FileInfo{Base(name), node}, nil
-}
-
-func (fs *FileSystem) Lchown(name string, uid, gid int) error {
-	if name == "/" {
-		fs.root.Uid = uint32(uid)
-		fs.root.Gid = uint32(gid)
+		fs.cwd = "/"
+		fs.dir = fs.root
 		return nil
 	}
-	name = inode.Abs(fs.cwd, name)
-	node, err := fs.root.Resolve(strings.TrimLeft(name, "/"))
-	if err != nil {
-		return err
+
+	wd := fs.root
+	cwd := name
+	if !path.IsAbs(name) {
+		cwd = path.Join(fs.cwd, name)
+		wd = fs.dir
 	}
 
-	node.Uid = uint32(uid)
-	node.Gid = uint32(gid)
+	node, err := wd.Resolve(name)
+	if err != nil {
+		return &stdfs.PathError{Op: "chdir", Path: name, Err: err}
+	}
+
+	if !node.IsDir() {
+		return &stdfs.PathError{Op: "chdir", Path: name, Err: syscall.ENOTDIR}
+	}
+
+	fs.cwd = cwd
+	fs.dir = node
+
 	return nil
 }
 
-func (fs *FileSystem) Readlink(name string) (string, error) {
-	var ino uint64
-	if name == "/" {
-		ino = fs.root.Ino
-	} else {
-		node, err := fs.root.Resolve(strings.TrimLeft(name, "/"))
-		if err != nil {
-			return "", err
-		}
-		ino = node.Ino
-	}
-
+func (fs *pbFS) Getwd() (dir string, err error) {
 	fs.mtx.RLock()
 	defer fs.mtx.RUnlock()
 
-	return fs.symlinks[ino], nil
+	return fs.cwd, nil
 }
 
-func (fs *FileSystem) Symlink(oldname, newname string) error {
-	wd := fs.root
-	if !IsAbs(newname) {
-		wd = fs.dir
-	}
-	var exists bool
-	newNode, err := wd.Resolve(newname)
-	if err == nil {
-		exists = true
-	}
-
-	if exists && newNode.Mode&os.ModeSymlink == 0 {
-		return &os.PathError{Op: "symlink", Path: newname, Err: syscall.EEXIST}
-	}
-	oldNode, err := wd.Resolve(oldname)
-	if err != nil {
-		return &os.PathError{Op: "symlink", Path: oldname, Err: syscall.ENOENT}
-	}
-
-	fs.mtx.Lock()
-	defer fs.mtx.Unlock()
-
-	if exists {
-		newNode.Mode = oldNode.Mode | os.ModeSymlink
-		fs.symlinks[newNode.Ino] = oldname
-		return nil
-	}
-
-	dir, filename := Split(newname)
-	dir = Clean(dir)
-	parent, err := wd.Resolve(dir)
-	if err != nil {
-		return err
-	}
-
-	newNode = fs.ino.New(oldNode.Mode | os.ModeSymlink)
-
-	err = parent.Link(filename, newNode)
-	if err != nil {
-		return &os.PathError{Op: "symlink", Path: newname, Err: err}
-	}
-	fs.symlinks[newNode.Ino] = oldname
-	return nil
-}
-
-func (fs *FileSystem) Walk(name string, fn filepath.WalkFunc) error {
-	var stack []string
-	push := func(path string) {
-		stack = append(stack, path)
-	}
-	pop := func() string {
-		path := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		return path
-	}
-
-	push(name)
-	for len(stack) > 0 {
-		path := pop()
-		info, err := fs.Stat(path)
-		if err != nil {
-			return err
-		}
-
-		if info.IsDir() {
-			f, err := fs.Open(path)
-			if err != nil {
-				return err
-			}
-
-			names, err := f.Readdirnames(-1)
-			f.Close()
-			if err != nil {
-				return err
-			}
-
-			sort.Sort(sort.Reverse(sort.StringSlice(names)))
-			for _, p := range names {
-				if p == ".." || p == "." {
-					continue
-				}
-				push(Join(path, p))
-			}
-		}
-
-		err = fn(path, info, nil)
-		if err != nil {
-			return err
-		}
-
-	}
-	return nil
+func (fs *pbFS) TempDir() string {
+	return tempDir
 }

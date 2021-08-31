@@ -3,8 +3,9 @@ package inode
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	filepath "path"
+	filepath "path" // force forward slash separators on all OSs
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -18,15 +19,13 @@ type Inode struct {
 	sync.RWMutex
 
 	Ino   uint64
-	Mode  os.FileMode
+	Mode  fs.FileMode
 	Nlink uint64
 	Size  int64
 
 	Ctime time.Time // creation time
 	Atime time.Time // access time
 	Mtime time.Time // modification time
-	Uid   uint32
-	Gid   uint32
 
 	Dir Directory
 }
@@ -40,6 +39,7 @@ func (e *DirEntry) IsDir() bool {
 	if e.Inode == nil {
 		return false
 	}
+
 	return e.Inode.IsDir()
 }
 
@@ -54,6 +54,7 @@ type Ino uint64
 func (n *Ino) New(mode os.FileMode) *Inode {
 	atomic.AddUint64((*uint64)(unsafe.Pointer(n)), 1)
 	now := time.Now()
+
 	return &Inode{
 		Ino:   uint64(*n),
 		Atime: now,
@@ -69,14 +70,12 @@ func (n *Ino) SubIno() {
 
 func (n *Ino) NewDir(mode os.FileMode) *Inode {
 	dir := n.New(mode)
-	var err error
 	dir.Mode = os.ModeDir | mode
-	err = dir.Link(".", dir)
-	if err != nil {
+
+	if err := dir.Link(".", dir); err != nil {
 		panic(err)
 	}
-	err = dir.Link("..", dir)
-	if err != nil {
+	if err := dir.Link("..", dir); err != nil {
 		panic(err)
 	}
 
@@ -102,6 +101,7 @@ func (n *Inode) Link(name string, child *Inode) error {
 		return nil
 	}
 	n.linki(x, entry)
+
 	return nil
 }
 
@@ -122,6 +122,7 @@ func (n *Inode) Unlink(name string) error {
 	}
 
 	n.unlinki(x)
+
 	return nil
 }
 
@@ -136,17 +137,19 @@ func (n *Inode) UnlinkAll() {
 			e.Inode.countDown()
 			continue
 		}
+
 		n.Unlock()
 		e.Inode.UnlinkAll()
 		n.Lock()
 		e.Inode.countDown()
 	}
+
 	n.Dir = n.Dir[:0]
 	n.Unlock()
 }
 
 func (n *Inode) IsDir() bool {
-	return os.ModeDir&n.Mode != 0
+	return n.Mode&fs.ModeDir != 0
 }
 
 func (n *Inode) Rename(oldpath, newpath string) error {
@@ -168,7 +171,7 @@ func (n *Inode) Rename(oldpath, newpath string) error {
 	if err == nil && tnode.IsDir() {
 		return syscall.EEXIST
 	}
-	if (err == nil && !tnode.IsDir()) || (err != nil && os.IsNotExist(err)) {
+	if (err == nil && !tnode.IsDir()) || (err != nil && errors.Is(err, fs.ErrNotExist)) {
 		var tdir string
 		tdir, rename = filepath.Split(newpath)
 		tdir = filepath.Clean(tdir)
@@ -214,6 +217,7 @@ func (n *Inode) Resolve(path string) (*Inode, error) {
 		}
 		return nn, err
 	}
+
 	x := n.find(name)
 	if x < len(n.Dir) && n.Dir[x].Name == name {
 		nn := n.Dir[x].Inode
@@ -222,6 +226,7 @@ func (n *Inode) Resolve(path string) (*Inode, error) {
 		}
 		return nn.Resolve(trim)
 	}
+
 	return nil, syscall.ENOENT // os.ErrNotExist
 }
 
@@ -252,6 +257,7 @@ func (n *Inode) unlinki(i int) {
 	n.Dir[i].Inode.countDown()
 	copy(n.Dir[i:], n.Dir[i+1:])
 	n.Dir = n.Dir[:len(n.Dir)-1]
+
 	n.modified()
 }
 
@@ -259,6 +265,7 @@ func (n *Inode) linkswapi(i int, entry *DirEntry) {
 	n.Dir[i].Inode.countDown()
 	n.Dir[i] = entry
 	n.Dir[i].Inode.countUp()
+
 	n.modified()
 }
 
@@ -268,6 +275,7 @@ func (n *Inode) linki(i int, entry *DirEntry) {
 
 	n.Dir[i] = entry
 	n.Dir[i].Inode.countUp()
+
 	n.modified()
 }
 

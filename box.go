@@ -2,10 +2,8 @@ package pandorasbox
 
 import (
 	"errors"
-	"io"
+	"io/fs"
 	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/awnumar/memguard"
 	"github.com/capnspacehook/pandorasbox/absfs"
@@ -15,8 +13,8 @@ import (
 )
 
 type Box struct {
-	osfs *osfs.FileSystem
-	vfs  *vfs.FileSystem
+	osfs absfs.FileSystem
+	vfs  absfs.FileSystem
 }
 
 func NewBox() *Box {
@@ -27,19 +25,23 @@ func NewBox() *Box {
 	return box
 }
 
-func (b *Box) Abs(path string) (string, error) {
-	if vfsPath, ok := ConvertVFSPath(path); ok {
-		absPath, err := b.vfs.Abs(vfsPath)
-		if err != nil {
-			return "", err
-		}
-		return MakeVFSPath(absPath), nil
-	}
-
-	return b.osfs.Abs(path)
+func (b *Box) OSFS() absfs.FileSystem {
+	return b.osfs
 }
 
-func (b *Box) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
+func (b *Box) VFS() absfs.FileSystem {
+	return b.vfs
+}
+
+func (b *Box) Open(name string) (absfs.File, error) {
+	if vfsName, ok := ConvertVFSPath(name); ok {
+		return b.vfs.Open(vfsName)
+	}
+
+	return b.osfs.Open(name)
+}
+
+func (b *Box) OpenFile(name string, flag int, perm fs.FileMode) (absfs.File, error) {
 	if vfsName, ok := ConvertVFSPath(name); ok {
 		return b.vfs.OpenFile(vfsName, flag, perm)
 	}
@@ -47,7 +49,39 @@ func (b *Box) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, err
 	return b.osfs.OpenFile(name, flag, perm)
 }
 
-func (b *Box) Mkdir(name string, perm os.FileMode) error {
+func (b *Box) Create(name string) (absfs.File, error) {
+	if vfsName, ok := ConvertVFSPath(name); ok {
+		return b.vfs.Create(vfsName)
+	}
+
+	return b.osfs.Create(name)
+}
+
+func (b *Box) ReadFile(filename string) ([]byte, error) {
+	if vfsFilename, ok := ConvertVFSPath(filename); ok {
+		return b.vfs.ReadFile(vfsFilename)
+	}
+
+	return b.osfs.ReadFile(filename)
+}
+
+func (b *Box) ReadDir(dirname string) ([]fs.DirEntry, error) {
+	if vfsDirname, ok := ConvertVFSPath(dirname); ok {
+		return b.vfs.ReadDir(vfsDirname)
+	}
+
+	return b.osfs.ReadDir(dirname)
+}
+
+func (b *Box) WriteFile(filename string, data []byte, perm fs.FileMode) error {
+	if vfsFilename, ok := ConvertVFSPath(filename); ok {
+		return ioutil.WriteFile(b.vfs, vfsFilename, data, perm)
+	}
+
+	return ioutil.WriteFile(b.osfs, filename, data, perm)
+}
+
+func (b *Box) Mkdir(name string, perm fs.FileMode) error {
 	if vfsName, ok := ConvertVFSPath(name); ok {
 		return b.vfs.Mkdir(vfsName, perm)
 	}
@@ -55,12 +89,28 @@ func (b *Box) Mkdir(name string, perm os.FileMode) error {
 	return b.osfs.Mkdir(name, perm)
 }
 
-func (b *Box) Remove(name string) error {
+func (b *Box) MkdirAll(name string, perm fs.FileMode) error {
 	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Remove(vfsName)
+		return b.vfs.MkdirAll(vfsName, perm)
 	}
 
-	return b.osfs.Remove(name)
+	return b.osfs.MkdirAll(name, perm)
+}
+
+func (b *Box) Stat(name string) (fs.FileInfo, error) {
+	if vfsName, ok := ConvertVFSPath(name); ok {
+		return b.vfs.Stat(vfsName)
+	}
+
+	return b.osfs.Stat(name)
+}
+
+func (b *Box) Lstat(name string) (fs.FileInfo, error) {
+	if vfsName, ok := ConvertVFSPath(name); ok {
+		return b.vfs.Lstat(vfsName)
+	}
+
+	return b.osfs.Lstat(name)
 }
 
 func (b *Box) Rename(oldpath, newpath string) error {
@@ -75,36 +125,49 @@ func (b *Box) Rename(oldpath, newpath string) error {
 	return b.osfs.Rename(oldpath, newpath)
 }
 
-func (b *Box) Stat(name string) (os.FileInfo, error) {
+func (b *Box) Remove(name string) error {
 	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Stat(vfsName)
+		return b.vfs.Remove(vfsName)
 	}
 
-	return b.osfs.Stat(name)
+	return b.osfs.Remove(name)
 }
 
-func (b *Box) Chmod(name string, mode os.FileMode) error {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Chmod(vfsName, mode)
+func (b *Box) RemoveAll(path string) error {
+	if vfsPath, ok := ConvertVFSPath(path); ok {
+		return b.vfs.RemoveAll(vfsPath)
 	}
 
-	return b.osfs.Chmod(name, mode)
+	return b.osfs.RemoveAll(path)
 }
 
-func (b *Box) Chtimes(name string, atime time.Time, mtime time.Time) error {
+func (b *Box) Truncate(name string, size int64) error {
 	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Chtimes(vfsName, atime, mtime)
+		return b.vfs.Truncate(vfsName, size)
 	}
 
-	return b.osfs.Chtimes(name, atime, mtime)
+	return b.osfs.Truncate(name, size)
 }
 
-func (b *Box) Chown(name string, uid, gid int) error {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Chown(vfsName, uid, gid)
+func (b *Box) WalkDir(root string, fn fs.WalkDirFunc) error {
+	if vfsName, ok := ConvertVFSPath(root); ok {
+		return b.vfs.WalkDir(vfsName, fn)
 	}
 
-	return b.osfs.Chown(name, uid, gid)
+	return b.osfs.WalkDir(root, fn)
+}
+
+func (b *Box) Abs(path string) (string, error) {
+	if vfsPath, ok := ConvertVFSPath(path); ok {
+		absPath, err := b.vfs.Abs(vfsPath)
+		if err != nil {
+			return "", err
+		}
+
+		return MakeVFSPath(absPath), nil
+	}
+
+	return b.osfs.Abs(path)
 }
 
 func (b *Box) Separator(vfsMode bool) uint8 {
@@ -153,137 +216,6 @@ func (b *Box) GetTempDir(vfsMode bool) string {
 	}
 
 	return b.osfs.TempDir()
-}
-
-func (b *Box) Open(name string) (absfs.File, error) {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Open(vfsName)
-	}
-
-	return b.osfs.Open(name)
-}
-
-func (b *Box) Create(name string) (absfs.File, error) {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Create(vfsName)
-	}
-
-	return b.osfs.Create(name)
-}
-
-func (b *Box) MkdirAll(name string, perm os.FileMode) error {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.MkdirAll(vfsName, perm)
-	}
-
-	return b.osfs.MkdirAll(name, perm)
-}
-
-func (b *Box) RemoveAll(path string) error {
-	if vfsPath, ok := ConvertVFSPath(path); ok {
-		return b.vfs.RemoveAll(vfsPath)
-	}
-
-	return b.osfs.RemoveAll(path)
-}
-
-func (b *Box) Truncate(name string, size int64) error {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Truncate(vfsName, size)
-	}
-
-	return b.osfs.Truncate(name, size)
-}
-
-func (b *Box) Lstat(name string) (os.FileInfo, error) {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Lstat(vfsName)
-	}
-
-	return b.osfs.Lstat(name)
-}
-
-func (b *Box) Lchown(name string, uid, gid int) error {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Lchown(vfsName, uid, gid)
-	}
-
-	return b.osfs.Lchown(name, uid, gid)
-}
-
-func (b *Box) Readlink(name string) (string, error) {
-	if vfsName, ok := ConvertVFSPath(name); ok {
-		return b.vfs.Readlink(vfsName)
-	}
-
-	return b.osfs.Readlink(name)
-}
-
-func (b *Box) Symlink(oldname, newname string) error {
-	vfsOldName, oldNameVFS := ConvertVFSPath(oldname)
-	vfsNewName, newNameVFS := ConvertVFSPath(newname)
-	if oldNameVFS && newNameVFS {
-		return b.vfs.Rename(vfsOldName, vfsNewName)
-	} else if (oldNameVFS && !newNameVFS) || (!oldNameVFS && newNameVFS) {
-		return &os.LinkError{Op: "symlink", Old: oldname, New: newname, Err: errors.New("oldname and newname must both either be a VFS path, or normal path")}
-	}
-
-	return b.osfs.Symlink(oldname, newname)
-}
-
-func (b *Box) Walk(root string, walkFn filepath.WalkFunc) error {
-	if vfsPath, ok := ConvertVFSPath(root); ok {
-		root = vfsPath
-		return b.vfs.Walk(root, walkFn)
-	}
-
-	return b.osfs.Walk(root, walkFn)
-}
-
-// io/ioutil methods
-
-func (b *Box) ReadAll(r io.Reader) ([]byte, error) {
-	return ioutil.ReadAll(r)
-}
-
-func (b *Box) ReadFile(filename string) ([]byte, error) {
-	if vfsFilename, ok := ConvertVFSPath(filename); ok {
-		return ioutil.ReadFile(b.vfs, vfsFilename)
-	}
-
-	return ioutil.ReadFile(b.osfs, filename)
-}
-
-func (b *Box) WriteFile(filename string, data []byte, perm os.FileMode) error {
-	if vfsFilename, ok := ConvertVFSPath(filename); ok {
-		return ioutil.WriteFile(b.vfs, vfsFilename, data, perm)
-	}
-
-	return ioutil.WriteFile(b.osfs, filename, data, perm)
-}
-
-func (b *Box) ReadDir(dirname string) ([]os.FileInfo, error) {
-	if vfsDirname, ok := ConvertVFSPath(dirname); ok {
-		return ioutil.ReadDir(b.vfs, vfsDirname)
-	}
-
-	return ioutil.ReadDir(b.osfs, dirname)
-}
-
-func (b *Box) TempFile(dir, prefix string) (absfs.File, error) {
-	if vfsDir, ok := ConvertVFSPath(dir); ok {
-		return ioutil.TempFile(b.vfs, vfsDir, prefix)
-	}
-
-	return ioutil.TempFile(b.osfs, dir, prefix)
-}
-
-func (b *Box) TempDir(dir, prefix string) (string, error) {
-	if vfsDir, ok := ConvertVFSPath(dir); ok {
-		return ioutil.TempDir(b.vfs, vfsDir, prefix)
-	}
-
-	return ioutil.TempDir(b.osfs, dir, prefix)
 }
 
 func (b *Box) Close() {

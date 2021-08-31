@@ -1,6 +1,7 @@
 package pandorasbox
 
 import (
+	"io/fs"
 	"os"
 	"strings"
 
@@ -23,38 +24,25 @@ func convertVFSPath(path string) string {
 }
 
 func IsVFSPath(path string) bool {
-	if strings.HasPrefix(path, VFSPrefix) {
-		return true
-	}
-
-	return false
+	return strings.HasPrefix(path, VFSPrefix)
 }
 
 func MakeVFSPath(path string) string {
-	vfsPath := strings.Replace(path, "/", VFSPrefix, 1)
-	if vfsPath == path {
-		vfsPath = VFSPrefix + path
+	if IsVFSPath(path) {
+		return path
 	}
 
-	return vfsPath
+	if len(path) > 0 && path[0] != '/' {
+		return VFSPrefix + path
+	}
+
+	return strings.Replace(path, "/", VFSPrefix, 1)
 }
 
-func IsVFS(fi os.FileInfo) bool {
+func IsVFS(fi fs.FileInfo) bool {
 	_, fivfs := fi.(*vfs.FileInfo)
 
 	return fivfs
-}
-
-func IsNotExist(err error) bool {
-	return os.IsNotExist(err)
-}
-
-func IsExist(err error) bool {
-	return os.IsExist(err)
-}
-
-func IsPermission(err error) bool {
-	return os.IsPermission(err)
 }
 
 func SameFile(fi1, fi2 os.FileInfo) bool {

@@ -1,7 +1,7 @@
 package inode
 
 import (
-	filepath "path" // force forward slash separators on all OSs.
+	filepath "path" // force forward slash separators on all OSs
 	"strings"
 )
 
@@ -12,6 +12,7 @@ func Abs(cwd, name string) string {
 	if filepath.IsAbs(name) {
 		return name
 	}
+
 	return filepath.Join(cwd, name)
 }
 
@@ -31,5 +32,6 @@ func PopPath(path string) (string, string) {
 	} else if x == 0 {
 		return "/", strings.TrimLeft(path, "/") // 3
 	}
+
 	return path[:x], path[x+1:] // 4, 5
 }
