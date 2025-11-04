@@ -1,0 +1,21 @@
+name: Run CodeQL
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - "*"
+  schedule:
+    - cron: "00 13 * * 1"
+
+  workflow_dispatch: {}
+
+jobs:
+  codeql:
+    permissions:
+      actions: write
+      contents: read
+      security-events: write
+    uses: capnspacehook/go-workflows/.github/workflows/codeql.yml@master
