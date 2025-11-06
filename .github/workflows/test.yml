@@ -15,3 +15,5 @@ jobs:
     permissions:
       contents: read
     uses: capnspacehook/go-workflows/.github/workflows/test.yml@master
+    with:
+      fuzz-with-race: true

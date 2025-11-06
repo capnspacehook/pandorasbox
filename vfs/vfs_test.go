@@ -2,10 +2,10 @@ package vfs
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"io"
 	"io/fs"
-	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
