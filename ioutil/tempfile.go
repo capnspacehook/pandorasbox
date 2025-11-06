@@ -5,6 +5,8 @@
 package ioutil
 
 import (
+	"errors"
+	stdfs "io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,8 +20,10 @@ import (
 // We generate random temporary file names so that there's a good
 // chance the file doesn't exist yet - keeps the number of tries in
 // TempFile to a minimum.
-var rand uint32
-var randmu sync.Mutex
+var (
+	rand   uint32
+	randmu sync.Mutex
+)
 
 func reseed() uint32 {
 	return uint32(time.Now().UnixNano() + int64(os.Getpid()))
@@ -49,16 +53,19 @@ func nextSuffix() string {
 func TempFile(fs absfs.FileSystem, dir, prefix string) (f absfs.File, err error) {
 	if dir == "" || dir == fs.TempDir() {
 		dir = fs.TempDir()
-		if _, err := fs.Stat(dir); os.IsNotExist(err) {
-			fs.Mkdir(dir, 0755)
+		if _, err := fs.Stat(dir); errors.Is(err, stdfs.ErrNotExist) {
+			err = fs.Mkdir(dir, 0o755)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	nconflict := 0
-	for i := 0; i < 10000; i++ {
+	for range 10000 {
 		name := filepath.Join(dir, prefix+nextSuffix())
-		f, err = fs.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
-		if os.IsExist(err) {
+		f, err = fs.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, stdfs.ErrExist) {
 			if nconflict++; nconflict > 10 {
 				randmu.Lock()
 				rand = reseed()
@@ -81,16 +88,19 @@ func TempFile(fs absfs.FileSystem, dir, prefix string) (f absfs.File, err error)
 func TempDir(fs absfs.FileSystem, dir, prefix string) (name string, err error) {
 	if dir == "" || dir == fs.TempDir() {
 		dir = fs.TempDir()
-		if _, err := fs.Stat(dir); os.IsNotExist(err) {
-			fs.Mkdir(dir, 0700)
+		if _, err := fs.Stat(dir); errors.Is(err, stdfs.ErrNotExist) {
+			err = fs.Mkdir(dir, 0o700)
+			if err != nil {
+				return "", err
+			}
 		}
 	}
 
 	nconflict := 0
-	for i := 0; i < 10000; i++ {
+	for range 10000 {
 		try := filepath.Join(dir, prefix+nextSuffix())
-		err = fs.Mkdir(try, 0700)
-		if os.IsExist(err) {
+		err = fs.Mkdir(try, 0o700)
+		if errors.Is(err, stdfs.ErrExist) {
 			if nconflict++; nconflict > 10 {
 				randmu.Lock()
 				rand = reseed()
@@ -98,8 +108,8 @@ func TempDir(fs absfs.FileSystem, dir, prefix string) (name string, err error) {
 			}
 			continue
 		}
-		if os.IsNotExist(err) {
-			if _, err := fs.Stat(dir); os.IsNotExist(err) {
+		if errors.Is(err, stdfs.ErrNotExist) {
+			if _, err := fs.Stat(dir); errors.Is(err, stdfs.ErrNotExist) {
 				return "", err
 			}
 		}

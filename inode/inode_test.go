@@ -77,7 +77,7 @@ func TestInode(t *testing.T) {
 
 	CWD := "/"
 	cwd := &CWD
-	Mkdir := func(path string, perm os.FileMode) error {
+	Mkdir := func(path string, _ os.FileMode) error {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(*cwd, path)
 		}

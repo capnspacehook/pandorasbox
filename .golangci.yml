@@ -12,7 +12,6 @@ linters:
     - errorlint
     - exptostd
     - fatcontext
-    - forcetypeassert
     - gocheckcompilerdirectives
     - goconst
     - gocritic
@@ -43,6 +42,9 @@ linters:
     - usestdlibvars
     - wastedassign
   settings:
+    gocritic:
+      disabled-checks:
+        - ifElseChain
     misspell:
       locale: US
     paralleltest:

@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("B\xec^uݟ\xd0(\\\x12;\xc5Ǉ\x96\r\xb0")
+[]byte("B\xec^uݟ\xd0(\\\x12")
+uint64(0)
+uint64(0)

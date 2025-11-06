@@ -2,7 +2,7 @@ package vfs
 
 import (
 	"bytes"
-	"fmt"
+	"errors"
 	"io"
 	"io/fs"
 	"math/rand"
@@ -16,6 +16,8 @@ import (
 	"testing/iotest"
 	"time"
 
+	"github.com/matryer/is"
+
 	"github.com/capnspacehook/pandorasbox/absfs"
 	"github.com/capnspacehook/pandorasbox/ioutil"
 )
@@ -23,6 +25,10 @@ import (
 const (
 	dots = "1....2....3....4"
 	abc  = "abcdefghijklmnop"
+
+	filename   = "testfile"
+	renameFrom = "renamefrom"
+	renameTo   = "renameto"
 )
 
 func TestVFS(t *testing.T) {
@@ -32,7 +38,7 @@ func TestVFS(t *testing.T) {
 
 	vfs := NewFS()
 
-	if err := vfs.Mkdir("memz", 0777); err != nil {
+	if err := vfs.Mkdir("memz", 0o777); err != nil {
 		t.Fatalf("error creating dir: %v", err)
 	}
 
@@ -99,7 +105,7 @@ func TestMkdir(t *testing.T) {
 	testdir := path.Join(vfs.TempDir(), "mkdir_test")
 	t.Logf("Test path: %q", testdir)
 
-	err := vfs.MkdirAll(testdir, 0777)
+	err := vfs.MkdirAll(testdir, 0o777)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +164,7 @@ func TestOpenWrite(t *testing.T) {
 	if n != len(data) {
 		t.Errorf("write error: wrong byte count %d, expected %d", n, len(data))
 	}
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Fatal("expected EOF, got nil error")
 	}
 	buff = buff[:n]
@@ -174,9 +180,9 @@ func TestCreate(t *testing.T) {
 	vfs := NewFS()
 	// Create file with absolute path
 	{
-		f, err := vfs.OpenFile("/testfile", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+		f, err := vfs.OpenFile("/testfile", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o666)
 		if err != nil {
-			t.Fatalf("Unexpected error creating file: %s", err)
+			t.Fatalf("Unexpected error creating file: %v", err)
 		}
 		if name := f.Name(); name != "/testfile" {
 			t.Errorf("Wrong name: %s", name)
@@ -185,32 +191,32 @@ func TestCreate(t *testing.T) {
 
 	// Create same file again
 	{
-		_, err := vfs.OpenFile("/testfile", os.O_RDWR|os.O_CREATE, 0666)
+		_, err := vfs.OpenFile("/testfile", os.O_RDWR|os.O_CREATE, 0o666)
 		if err != nil {
-			t.Fatalf("Unexpected error creating file: %s", err)
+			t.Fatalf("Unexpected error creating file: %v", err)
 		}
 
 	}
 
 	// Create same file again, but truncate it
 	{
-		_, err := vfs.OpenFile("/testfile", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+		_, err := vfs.OpenFile("/testfile", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o666)
 		if err != nil {
-			t.Fatalf("Unexpected error creating file: %s", err)
+			t.Fatalf("Unexpected error creating file: %v", err)
 		}
 	}
 
 	// Create same file again with O_CREATE|O_EXCL, which is an error
 	{
-		_, err := vfs.OpenFile("/testfile", os.O_RDWR|os.O_CREATE|os.O_EXCL, 0666)
+		_, err := vfs.OpenFile("/testfile", os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o666)
 		if err == nil {
-			t.Fatalf("Expected error creating file: %s", err)
+			t.Fatalf("Expected error creating file: %v", err)
 		}
 	}
 
 	// Create file with unknown parent
 	{
-		_, err := vfs.OpenFile("/testfile/testfile", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+		_, err := vfs.OpenFile("/testfile/testfile", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o666)
 		if err == nil {
 			t.Errorf("Expected error creating file")
 		}
@@ -218,9 +224,9 @@ func TestCreate(t *testing.T) {
 
 	// Create file with relative path (workingDir == root)
 	{
-		f, err := vfs.OpenFile("relFile", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+		f, err := vfs.OpenFile("relFile", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o666)
 		if err != nil {
-			t.Fatalf("Unexpected error creating file: %s", err)
+			t.Fatalf("Unexpected error creating file: %v", err)
 		}
 		if name := f.Name(); name != "relFile" {
 			t.Errorf("Wrong name: %s", name)
@@ -235,7 +241,7 @@ func TestMkdirAbsRel(t *testing.T) {
 	{
 		err := vfs.Mkdir("/usr", 0)
 		if err != nil {
-			t.Fatalf("Unexpected error creating directory: %s", err)
+			t.Fatalf("Unexpected error creating directory: %v", err)
 		}
 	}
 
@@ -243,7 +249,7 @@ func TestMkdirAbsRel(t *testing.T) {
 	{
 		err := vfs.Mkdir("home", 0)
 		if err != nil {
-			t.Fatalf("Unexpected error creating directory: %s", err)
+			t.Fatalf("Unexpected error creating directory: %v", err)
 		}
 	}
 
@@ -261,17 +267,17 @@ func TestMkdirTree(t *testing.T) {
 
 	err := vfs.Mkdir("/home", 0)
 	if err != nil {
-		t.Fatalf("Unexpected error creating directory /home: %s", err)
+		t.Fatalf("Unexpected error creating directory /home: %v", err)
 	}
 
 	err = vfs.Mkdir("/home/blang", 0)
 	if err != nil {
-		t.Fatalf("Unexpected error creating directory /home/blang: %s", err)
+		t.Fatalf("Unexpected error creating directory /home/blang: %v", err)
 	}
 
 	err = vfs.Mkdir("/home/blang/goprojects", 0)
 	if err != nil {
-		t.Fatalf("Unexpected error creating directory /home/blang/goprojects: %s", err)
+		t.Fatalf("Unexpected error creating directory /home/blang/goprojects: %v", err)
 	}
 
 	err = vfs.Mkdir("/home/johndoe/goprojects", 0)
@@ -284,16 +290,16 @@ func TestMkdirTree(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	vfs := NewFS()
-	err := vfs.Mkdir("/tmp", 0777)
+	err := vfs.Mkdir("/tmp", 0o777)
 	if err != nil {
-		t.Fatalf("Mkdir error: %s", err)
+		t.Fatalf("Mkdir error: %v", err)
 	}
-	f, err := vfs.OpenFile("/tmp/README.txt", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+	f, err := vfs.OpenFile("/tmp/README.txt", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o666)
 	if err != nil {
-		t.Fatalf("Create error: %s", err)
+		t.Fatalf("Create error: %v", err)
 	}
 	if _, err := f.Write([]byte("test")); err != nil {
-		t.Fatalf("Write error: %s", err)
+		t.Fatalf("Write error: %v", err)
 	}
 	f.Close()
 
@@ -310,28 +316,28 @@ func TestRemove(t *testing.T) {
 	// remove created file
 	err = vfs.Remove(f.Name())
 	if err != nil {
-		t.Errorf("Remove failed: %s", err)
+		t.Errorf("Remove failed: %v", err)
 	}
 
-	if _, err = vfs.OpenFile("/tmp/README.txt", os.O_RDWR, 0666); err == nil {
+	if _, err = vfs.OpenFile("/tmp/README.txt", os.O_RDWR, 0o666); err == nil {
 		t.Errorf("Could open removed file!")
 	}
 
 	err = vfs.Remove("/tmp")
 	if err != nil {
-		t.Errorf("Remove failed: %s", err)
+		t.Errorf("Remove failed: %v", err)
 	}
-	/*if fis, err := vfs.ReadDir("/"); err != nil {
-		t.Errorf("Readdir error: %s", err)
+	fis, err := vfs.ReadDir("/")
+	if err != nil {
+		t.Errorf("Readdir error: %v", err)
 	} else if len(fis) != 0 {
 		t.Errorf("Found files: %s", fis)
-	}*/
+	}
 }
 
 // Read with length 0 should not return EOF.
 func TestRead0(t *testing.T) {
 	vfs := NewFS()
-	filename := "testfile"
 	f, err := vfs.Create(filename)
 	if err != nil {
 		t.Fatal("open failed:", err)
@@ -359,7 +365,6 @@ func TestRead0(t *testing.T) {
 // Reading a closed file should return ErrClosed error
 func TestReadClosed(t *testing.T) {
 	vfs := NewFS()
-	filename := "testfile"
 	file, err := vfs.Create(filename)
 	if err != nil {
 		t.Fatal("open failed:", err)
@@ -369,62 +374,62 @@ func TestReadClosed(t *testing.T) {
 	b := make([]byte, 100)
 	_, err = file.Read(b)
 
-	e, ok := err.(*os.PathError)
-	if !ok {
-		t.Fatalf("Read: %T(%v), want PathError", e, e)
+	var pErr *os.PathError
+	if !errors.As(err, &pErr) {
+		t.Fatalf("Read: %T(%v), want PathError", pErr, pErr)
 	}
 
-	if e.Err != os.ErrClosed {
-		t.Errorf("Read: %v, want PathError(ErrClosed)", e)
+	if !errors.Is(pErr.Err, os.ErrClosed) {
+		t.Errorf("Read: %v, want PathError(ErrClosed)", pErr)
 	}
 }
 
 func TestReadWrite(t *testing.T) {
 	vfs := NewFS()
-	f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDWR, 0666)
+	f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDWR, 0o666)
 	if err != nil {
-		t.Fatalf("Could not open file: %s", err)
+		t.Fatalf("Could not open file: %v", err)
 	}
 
 	// Write first dots
 	if n, err := f.Write([]byte(dots)); err != nil {
-		t.Errorf("Unexpected error: %s", err)
+		t.Errorf("Unexpected error: %v", err)
 	} else if n != len(dots) {
 		t.Errorf("Invalid write count: %d", n)
 	}
 
 	// Write abc
 	if n, err := f.Write([]byte(abc)); err != nil {
-		t.Errorf("Unexpected error: %s", err)
+		t.Errorf("Unexpected error: %v", err)
 	} else if n != len(abc) {
 		t.Errorf("Invalid write count: %d", n)
 	}
 
 	// Seek to beginning of file
 	if n, err := f.Seek(0, io.SeekStart); err != nil || n != 0 {
-		t.Errorf("Seek error: %d %s", n, err)
+		t.Errorf("Seek error: %d %v", n, err)
 	}
 
 	// Seek to end of file
 	if n, err := f.Seek(0, io.SeekEnd); err != nil || n != 32 {
-		t.Errorf("Seek error: %d %s", n, err)
+		t.Errorf("Seek error: %d %v", n, err)
 	}
 
 	// Write dots at end of file
 	if n, err := f.Write([]byte(dots)); err != nil {
-		t.Errorf("Unexpected error: %s", err)
+		t.Errorf("Unexpected error: %v", err)
 	} else if n != len(dots) {
 		t.Errorf("Invalid write count: %d", n)
 	}
 
 	// Seek to beginning of file
 	if n, err := f.Seek(0, io.SeekStart); err != nil || n != 0 {
-		t.Errorf("Seek error: %d %s", n, err)
+		t.Errorf("Seek error: %d %v", n, err)
 	}
 
 	p := make([]byte, len(dots)+len(abc)+len(dots))
 	if n, err := f.Read(p); err != nil || n != len(dots)+len(abc)+len(dots) {
-		t.Errorf("Read error: %d %s", n, err)
+		t.Errorf("Read error: %d %v", n, err)
 	} else if s := string(p); s != dots+abc+dots {
 		t.Errorf("Invalid read: %s", s)
 	}
@@ -432,9 +437,9 @@ func TestReadWrite(t *testing.T) {
 
 func TestOpenRO(t *testing.T) {
 	vfs := NewFS()
-	f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDONLY, 0666)
+	f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDONLY, 0o666)
 	if err != nil {
-		t.Fatalf("Could not open file: %s", err)
+		t.Fatalf("Could not open file: %v", err)
 	}
 
 	// Write first dots
@@ -446,27 +451,27 @@ func TestOpenRO(t *testing.T) {
 
 func TestOpenWO(t *testing.T) {
 	vfs := NewFS()
-	f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_WRONLY, 0666)
+	f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_WRONLY, 0o666)
 	if err != nil {
-		t.Fatalf("Could not open file: %s", err)
+		t.Fatalf("Could not open file: %v", err)
 	}
 
 	// Write first dots
 	if n, err := f.Write([]byte(dots)); err != nil {
-		t.Errorf("Unexpected error: %s", err)
+		t.Errorf("Unexpected error: %v", err)
 	} else if n != len(dots) {
 		t.Errorf("Invalid write count: %d", n)
 	}
 
 	// Seek to beginning of file
 	if n, err := f.Seek(0, io.SeekStart); err != nil || n != 0 {
-		t.Errorf("Seek error: %d %s", n, err)
+		t.Errorf("Seek error: %d %v", n, err)
 	}
 
 	// Try reading
 	p := make([]byte, len(dots))
 	if n, err := f.Read(p); err == nil || n > 0 {
-		t.Errorf("Expected invalid read: %d %s", n, err)
+		t.Errorf("Expected invalid read: %d %v", n, err)
 	}
 
 	f.Close()
@@ -474,40 +479,40 @@ func TestOpenWO(t *testing.T) {
 
 func TestOpenAppend(t *testing.T) {
 	vfs := NewFS()
-	f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDWR, 0666)
+	f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDWR, 0o666)
 	if err != nil {
-		t.Fatalf("Could not open file: %s", err)
+		t.Fatalf("Could not open file: %v", err)
 	}
 
 	// Write first dots
 	if n, err := f.Write([]byte(dots)); err != nil {
-		t.Errorf("Unexpected error: %s", err)
+		t.Errorf("Unexpected error: %v", err)
 	} else if n != len(dots) {
 		t.Errorf("Invalid write count: %d", n)
 	}
 	f.Close()
 
 	// Reopen file in append mode
-	f, err = vfs.OpenFile("/readme.txt", os.O_APPEND|os.O_RDWR, 0666)
+	f, err = vfs.OpenFile("/readme.txt", os.O_APPEND|os.O_RDWR, 0o666)
 	if err != nil {
-		t.Fatalf("Could not open file: %s", err)
+		t.Fatalf("Could not open file: %v", err)
 	}
 
 	// append dots
 	if n, err := f.Write([]byte(abc)); err != nil {
-		t.Errorf("Unexpected error: %s", err)
+		t.Errorf("Unexpected error: %v", err)
 	} else if n != len(abc) {
 		t.Errorf("Invalid write count: %d", n)
 	}
 
 	// Seek to beginning of file
 	if n, err := f.Seek(0, io.SeekStart); err != nil || n != 0 {
-		t.Errorf("Seek error: %d %s", n, err)
+		t.Errorf("Seek error: %d %v", n, err)
 	}
 
 	p := make([]byte, len(dots)+len(abc))
 	if n, err := f.Read(p); err != nil || n != len(dots)+len(abc) {
-		t.Errorf("Read error: %d %s", n, err)
+		t.Errorf("Read error: %d %v", n, err)
 	} else if s := string(p); s != dots+abc {
 		t.Errorf("Invalid read: %s", s)
 	}
@@ -528,12 +533,12 @@ func TestTruncateToLength(t *testing.T) {
 
 	for _, param := range params {
 		vfs := NewFS()
-		f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDWR, 0666)
+		f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDWR, 0o666)
 		if err != nil {
-			t.Fatalf("Could not open file: %s", err)
+			t.Fatalf("Could not open file: %v", err)
 		}
 		if n, err := f.Write([]byte(dots)); err != nil {
-			t.Errorf("Unexpected error: %s", err)
+			t.Errorf("Unexpected error: %v", err)
 		} else if n != len(dots) {
 			t.Errorf("Invalid write count: %d", n)
 		}
@@ -547,18 +552,18 @@ func TestTruncateToLength(t *testing.T) {
 			}
 			return
 		} else if err != nil {
-			t.Errorf("Error truncating file: %s", err)
+			t.Errorf("Error truncating file: %v", err)
 		}
 
-		b, err := ioutil.ReadFile(vfs, "/readme.txt")
+		b, err := vfs.ReadFile("/readme.txt")
 		if err != nil {
-			t.Errorf("Error reading truncated file: %s", err)
+			t.Errorf("Error reading truncated file: %v", err)
 		}
 		if int64(len(b)) != newSize {
 			t.Errorf("File should be empty after truncation: %d", len(b))
 		}
 		if fi, err := vfs.Stat("/readme.txt"); err != nil {
-			t.Errorf("Error stat file: %s", err)
+			t.Errorf("Error stat file: %v", err)
 		} else if fi.Size() != newSize {
 			t.Errorf("Filesize should be %d after truncation", newSize)
 		}
@@ -568,25 +573,25 @@ func TestTruncateToLength(t *testing.T) {
 func TestTruncateToZero(t *testing.T) {
 	const content = "read me"
 	vfs := NewFS()
-	if err := ioutil.WriteFile(vfs, "/readme.txt", []byte(content), 0666); err != nil {
-		t.Errorf("Unexpected error writing file: %s", err)
+	if err := vfs.WriteFile("/readme.txt", []byte(content), 0o666); err != nil {
+		t.Errorf("Unexpected error writing file: %v", err)
 	}
 
-	f, err := vfs.OpenFile("/readme.txt", os.O_RDWR|os.O_TRUNC, 0666)
+	f, err := vfs.OpenFile("/readme.txt", os.O_RDWR|os.O_TRUNC, 0o666)
 	if err != nil {
-		t.Errorf("Error opening file truncated: %s", err)
+		t.Errorf("Error opening file truncated: %v", err)
 	}
 	f.Close()
 
-	b, err := ioutil.ReadFile(vfs, "/readme.txt")
+	b, err := vfs.ReadFile("/readme.txt")
 	if err != nil {
-		t.Errorf("Error reading truncated file: %s", err)
+		t.Errorf("Error reading truncated file: %v", err)
 	}
 	if len(b) != 0 {
 		t.Errorf("File should be empty after truncation")
 	}
 	if fi, err := vfs.Stat("/readme.txt"); err != nil {
-		t.Errorf("Error stat file: %s", err)
+		t.Errorf("Error stat file: %v", err)
 	} else if fi.Size() != 0 {
 		t.Errorf("Filesize should be 0 after truncation")
 	}
@@ -594,26 +599,26 @@ func TestTruncateToZero(t *testing.T) {
 
 func TestStat(t *testing.T) {
 	vfs := NewFS()
-	f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDWR, 0666)
+	f, err := vfs.OpenFile("/readme.txt", os.O_CREATE|os.O_RDWR, 0o666)
 	if err != nil {
-		t.Fatalf("Could not open file: %s", err)
+		t.Fatalf("Could not open file: %v", err)
 	}
 
 	// Write first dots
 	if n, err := f.Write([]byte(dots)); err != nil {
-		t.Fatalf("Unexpected error: %s", err)
+		t.Fatalf("Unexpected error: %v", err)
 	} else if n != len(dots) {
 		t.Fatalf("Invalid write count: %d", n)
 	}
 	f.Close()
 
-	if err := vfs.Mkdir("/tmp", 0777); err != nil {
-		t.Fatalf("Mkdir error: %s", err)
+	if err := vfs.Mkdir("/tmp", 0o777); err != nil {
+		t.Fatalf("Mkdir error: %v", err)
 	}
 
 	fi, err := vfs.Stat(f.Name())
 	if err != nil {
-		t.Errorf("Stat error: %s", err)
+		t.Errorf("Stat error: %v", err)
 	}
 
 	// Fileinfo name is base name
@@ -645,14 +650,14 @@ func TestStatError(t *testing.T) {
 	if fi != nil {
 		t.Errorf("got %v, want nil", fi)
 	}
-	if perr, ok := err.(*os.PathError); !ok {
+	var perr *os.PathError
+	if !errors.As(err, &perr) {
 		t.Errorf("got %T, want %T", err, perr)
 	}
 }
 
 func TestFstat(t *testing.T) {
 	vfs := NewFS()
-	filename := "testfile"
 	file, err := vfs.Create(filename)
 	if err != nil {
 		t.Fatal("open failed:", err)
@@ -681,12 +686,12 @@ func TestFstat(t *testing.T) {
 func TestRename(t *testing.T) {
 	const content = "read me"
 	vfs := NewFS()
-	if err := ioutil.WriteFile(vfs, "/readme.txt", []byte(content), 0666); err != nil {
-		t.Errorf("Unexpected error writing file: %s", err)
+	if err := vfs.WriteFile("/readme.txt", []byte(content), 0o666); err != nil {
+		t.Errorf("Unexpected error writing file: %v", err)
 	}
 
 	if err := vfs.Rename("/readme.txt", "/README.txt"); err != nil {
-		t.Errorf("Unexpected error renaming file: %s", err)
+		t.Errorf("Unexpected error renaming file: %v", err)
 	}
 
 	if _, err := vfs.Stat("/readme.txt"); err == nil {
@@ -694,10 +699,10 @@ func TestRename(t *testing.T) {
 	}
 
 	if _, err := vfs.Stat("/README.txt"); err != nil {
-		t.Errorf("Error stat newfile: %s", err)
+		t.Errorf("Error stat newfile: %v", err)
 	}
-	if b, err := ioutil.ReadFile(vfs, "/README.txt"); err != nil {
-		t.Errorf("Error reading file: %s", err)
+	if b, err := vfs.ReadFile("/README.txt"); err != nil {
+		t.Errorf("Error reading file: %v", err)
 	} else if s := string(b); s != content {
 		t.Errorf("Invalid content: %s", s)
 	}
@@ -717,17 +722,17 @@ func TestRename(t *testing.T) {
 		t.Errorf("Expected error renaming file")
 	}
 
-	if err := vfs.Mkdir("/newdirectory", 0777); err != nil {
-		t.Errorf("Error creating directory: %s", err)
+	if err := vfs.Mkdir("/newdirectory", 0o777); err != nil {
+		t.Errorf("Error creating directory: %v", err)
 	}
 
 	if err := vfs.Rename("/README.txt", "/newdirectory/README.txt"); err != nil {
-		t.Errorf("Error renaming file: %s", err)
+		t.Errorf("Error renaming file: %v", err)
 	}
 
 	// Create the same file again at root
-	if err := ioutil.WriteFile(vfs, "/README.txt", []byte(content), 0666); err != nil {
-		t.Errorf("Unexpected error writing file: %s", err)
+	if err := vfs.WriteFile("/README.txt", []byte(content), 0o666); err != nil {
+		t.Errorf("Unexpected error writing file: %v", err)
 	}
 
 	// Overwrite existing file
@@ -738,17 +743,17 @@ func TestRename(t *testing.T) {
 
 func TestRenameOverwriteDest(t *testing.T) {
 	vfs := NewFS()
-	from, to := "renamefrom", "renameto"
+	from, to := renameFrom, renameTo
 
 	toData := []byte("to")
 	fromData := []byte("from")
 
-	err := ioutil.WriteFile(vfs, to, toData, 0777)
+	err := vfs.WriteFile(to, toData, 0o777)
 	if err != nil {
 		t.Fatalf("write file %q failed: %v", to, err)
 	}
 
-	err = ioutil.WriteFile(vfs, from, fromData, 0777)
+	err = vfs.WriteFile(from, fromData, 0o777)
 	if err != nil {
 		t.Fatalf("write file %q failed: %v", from, err)
 	}
@@ -761,7 +766,7 @@ func TestRenameOverwriteDest(t *testing.T) {
 	if err == nil {
 		t.Errorf("from file %q still exists", from)
 	}
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("stat from: %v", err)
 	}
 	toFi, err := vfs.Stat(to)
@@ -775,79 +780,86 @@ func TestRenameOverwriteDest(t *testing.T) {
 
 func TestRenameFailed(t *testing.T) {
 	vfs := NewFS()
-	from, to := "renamefrom", "renameto"
+	from, to := renameFrom, renameTo
 
 	err := vfs.Rename(from, to)
-	switch err := err.(type) {
-	case *os.LinkError:
-		if err.Op != "rename" {
-			t.Errorf("rename %q, %q: err.Op: want %q, got %q", from, to, "rename", err.Op)
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
+		if linkErr.Op != "rename" {
+			t.Errorf("rename %q, %q: err.Op: want %q, got %q", from, to, "rename", linkErr.Op)
 		}
-		if err.Old != from {
-			t.Errorf("rename %q, %q: err.Old: want %q, got %q", from, to, from, err.Old)
+		if linkErr.Old != from {
+			t.Errorf("rename %q, %q: err.Old: want %q, got %q", from, to, from, linkErr.Old)
 		}
-		if err.New != to {
-			t.Errorf("rename %q, %q: err.New: want %q, got %q", from, to, to, err.New)
+		if linkErr.New != to {
+			t.Errorf("rename %q, %q: err.New: want %q, got %q", from, to, to, linkErr.New)
 		}
-	case nil:
+	} else if err == nil {
 		t.Errorf("rename %q, %q: expected error, got nil", from, to)
-	default:
+	} else {
 		t.Errorf("rename %q, %q: expected %T, got %T %v", from, to, new(os.LinkError), err, err)
 	}
 }
 
 func TestRenameToDirFailed(t *testing.T) {
-	vfs := NewFS()
-	from, to := "renamefrom", "renameto"
+	is := is.New(t)
 
-	vfs.Mkdir(from, 0777)
-	vfs.Mkdir(to, 0777)
+	vfs := NewFS()
+	from, to := renameFrom, renameTo
+
+	is.NoErr(vfs.Mkdir(from, 0o777))
+	is.NoErr(vfs.Mkdir(to, 0o777))
 
 	err := vfs.Rename(from, to)
-	switch err := err.(type) {
-	case *os.LinkError:
-		if err.Op != "rename" {
-			t.Errorf("rename %q, %q: err.Op: want %q, got %q", from, to, "rename", err.Op)
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
+		if linkErr.Op != "rename" {
+			t.Errorf("rename %q, %q: err.Op: want %q, got %q", from, to, "rename", linkErr.Op)
 		}
-		if err.Old != from {
-			t.Errorf("rename %q, %q: err.Old: want %q, got %q", from, to, from, err.Old)
+		if linkErr.Old != from {
+			t.Errorf("rename %q, %q: err.Old: want %q, got %q", from, to, from, linkErr.Old)
 		}
-		if err.New != to {
-			t.Errorf("rename %q, %q: err.New: want %q, got %q", from, to, to, err.New)
+		if linkErr.New != to {
+			t.Errorf("rename %q, %q: err.New: want %q, got %q", from, to, to, linkErr.New)
 		}
-	case nil:
+	} else if err == nil {
 		t.Errorf("rename %q, %q: expected error, got nil", from, to)
-	default:
+	} else {
 		t.Errorf("rename %q, %q: expected %T, got %T %v", from, to, new(os.LinkError), err, err)
 	}
 }
 
 func checkSize(t *testing.T, f absfs.File, size int64) {
-	dir, err := f.Stat()
+	t.Helper()
+
+	fi, err := f.Stat()
 	if err != nil {
 		t.Fatalf("Stat %q (looking for size %d): %s", f.Name(), size, err)
 	}
-	if dir.Size() != size {
-		t.Errorf("Stat %q: size %d want %d", f.Name(), dir.Size(), size)
+	if fi.Size() != size {
+		t.Errorf("Stat %q: size %d want %d", f.Name(), fi.Size(), size)
 	}
 }
 
 func TestFTruncate(t *testing.T) {
+	is := is.New(t)
+
 	vfs := NewFS()
-	f, err := vfs.Create("testfile")
+	f, err := vfs.Create(filename)
 	if err != nil {
 		t.Fatal("create failed:", err)
 	}
 	defer f.Close()
 
 	checkSize(t, f, 0)
-	f.Write([]byte("hello, world\n"))
+	_, err = f.Write([]byte("hello, world\n"))
+	is.NoErr(err)
 	checkSize(t, f, 13)
-	f.Truncate(10)
+	is.NoErr(f.Truncate(10))
 	checkSize(t, f, 10)
-	f.Truncate(1024)
+	is.NoErr(f.Truncate(1024))
 	checkSize(t, f, 1024)
-	f.Truncate(0)
+	is.NoErr(f.Truncate(0))
 	checkSize(t, f, 0)
 	_, err = f.Write([]byte("surprise!"))
 	if err == nil {
@@ -856,21 +868,24 @@ func TestFTruncate(t *testing.T) {
 }
 
 func TestTruncate(t *testing.T) {
+	is := is.New(t)
+
 	vfs := NewFS()
-	f, err := vfs.Create("testfile")
+	f, err := vfs.Create(filename)
 	if err != nil {
 		t.Fatal("create failed:", err)
 	}
 	defer f.Close()
 
 	checkSize(t, f, 0)
-	f.Write([]byte("hello, world\n"))
+	_, err = f.Write([]byte("hello, world\n"))
+	is.NoErr(err)
 	checkSize(t, f, 13)
-	vfs.Truncate(f.Name(), 10)
+	is.NoErr(vfs.Truncate(f.Name(), 10))
 	checkSize(t, f, 10)
-	vfs.Truncate(f.Name(), 1024)
+	is.NoErr(vfs.Truncate(f.Name(), 1024))
 	checkSize(t, f, 1024)
-	vfs.Truncate(f.Name(), 0)
+	is.NoErr(vfs.Truncate(f.Name(), 0))
 	checkSize(t, f, 0)
 	_, err = f.Write([]byte("surprise!"))
 	if err == nil {
@@ -880,10 +895,9 @@ func TestTruncate(t *testing.T) {
 
 func TestChdir(t *testing.T) {
 	vfs := NewFS()
-	const N = 10
 	c := make(chan bool)
 	cpwd := make(chan string)
-	for i := 0; i < N; i++ {
+	for i := range 10 {
 		go func(i int) {
 			// Lock half the goroutines in their own operating system
 			// thread to exercise more scheduler possibilities.
@@ -911,7 +925,7 @@ func TestChdir(t *testing.T) {
 		t.Fatalf("Getwd: %v", err)
 	}
 	close(c)
-	for i := 0; i < N; i++ {
+	for range 10 {
 		pwd := <-cpwd
 		if pwd != d {
 			t.Errorf("Getwd returned %q; want %q", pwd, d)
@@ -919,7 +933,9 @@ func TestChdir(t *testing.T) {
 	}
 }
 
-func newFile(testName string, fs absfs.FileSystem, t *testing.T) (f absfs.File) {
+func newFile(t *testing.T, fs absfs.FileSystem, testName string) (f absfs.File) {
+	t.Helper()
+
 	f, err := ioutil.TempFile(fs, "/", "_Go_"+testName)
 	if err != nil {
 		t.Fatalf("TempFile %s: %s", testName, err)
@@ -928,12 +944,15 @@ func newFile(testName string, fs absfs.FileSystem, t *testing.T) (f absfs.File) 
 }
 
 func TestSeek(t *testing.T) {
+	is := is.New(t)
+
 	vfs := NewFS()
-	f := newFile("TestSeek", vfs, t)
+	f := newFile(t, vfs, "TestSeek")
 	defer f.Close()
 
 	const data = "hello, world\n"
-	io.WriteString(f, data)
+	_, err := io.WriteString(f, data)
+	is.NoErr(err)
 
 	type test struct {
 		in     int64
@@ -965,12 +984,15 @@ func TestSeek(t *testing.T) {
 }
 
 func TestReadAt(t *testing.T) {
+	is := is.New(t)
+
 	vfs := NewFS()
-	f := newFile("TestReadAt", vfs, t)
+	f := newFile(t, vfs, "TestReadAt")
 	defer f.Close()
 
 	const data = "hello, world\n"
-	io.WriteString(f, data)
+	_, err := io.WriteString(f, data)
+	is.NoErr(err)
 
 	b := make([]byte, 5)
 	n, err := f.ReadAt(b, 7)
@@ -984,14 +1006,18 @@ func TestReadAt(t *testing.T) {
 
 // Verify that ReadAt doesn't affect seek offset.
 func TestReadAtOffset(t *testing.T) {
+	is := is.New(t)
+
 	vfs := NewFS()
-	f := newFile("TestReadAtOffset", vfs, t)
+	f := newFile(t, vfs, "TestReadAtOffset")
 	defer f.Close()
 
 	const data = "hello, world\n"
-	io.WriteString(f, data)
+	_, err := io.WriteString(f, data)
+	is.NoErr(err)
 
-	f.Seek(0, 0)
+	_, err = f.Seek(0, 0)
+	is.NoErr(err)
 	b := make([]byte, 5)
 
 	n, err := f.ReadAt(b, 7)
@@ -1013,38 +1039,43 @@ func TestReadAtOffset(t *testing.T) {
 
 // Verify that ReadAt doesn't allow negative offset.
 func TestReadAtNegativeOffset(t *testing.T) {
+	is := is.New(t)
+
 	vfs := NewFS()
-	f := newFile("TestReadAtNegativeOffset", vfs, t)
+	f := newFile(t, vfs, "TestReadAtNegativeOffset")
 	defer f.Close()
 
 	const data = "hello, world\n"
-	io.WriteString(f, data)
+	_, err := io.WriteString(f, data)
+	is.NoErr(err)
 
-	f.Seek(0, 0)
+	_, err = f.Seek(0, 0)
+	is.NoErr(err)
 	b := make([]byte, 5)
 
 	n, err := f.ReadAt(b, -10)
-
-	const wantsub = "negative offset"
-	if !strings.Contains(fmt.Sprint(err), wantsub) || n != 0 {
-		t.Errorf("ReadAt(-10) = %v, %v; want 0, ...%q...", n, err, wantsub)
+	if !errors.Is(err, fs.ErrInvalid) {
+		t.Errorf("ReadAt(-10) = %v, %v; want 0, %v", n, err, fs.ErrInvalid)
 	}
 }
 
 func TestWriteAt(t *testing.T) {
+	is := is.New(t)
+
 	vfs := NewFS()
-	f := newFile("TestWriteAt", vfs, t)
+	f := newFile(t, vfs, "TestWriteAt")
 	defer f.Close()
 
 	const data = "hello, world\n"
-	io.WriteString(f, data)
+	_, err := io.WriteString(f, data)
+	is.NoErr(err)
 
 	n, err := f.WriteAt([]byte("WORLD"), 7)
 	if err != nil || n != 5 {
 		t.Fatalf("WriteAt 7: %d, %v", n, err)
 	}
 
-	b, err := ioutil.ReadFile(vfs, f.Name())
+	b, err := vfs.ReadFile(f.Name())
 	if err != nil {
 		t.Fatalf("ReadFile %s: %v", f.Name(), err)
 	}
@@ -1056,34 +1087,35 @@ func TestWriteAt(t *testing.T) {
 // Verify that WriteAt doesn't allow negative offset.
 func TestWriteAtNegativeOffset(t *testing.T) {
 	vfs := NewFS()
-	f := newFile("TestWriteAtNegativeOffset", vfs, t)
+	f := newFile(t, vfs, "TestWriteAtNegativeOffset")
 	defer f.Close()
 
 	n, err := f.WriteAt([]byte("WORLD"), -10)
-
-	const wantsub = "negative offset"
-	if !strings.Contains(fmt.Sprint(err), wantsub) || n != 0 {
-		t.Errorf("WriteAt(-10) = %v, %v; want 0, ...%q...", n, err, wantsub)
+	if !errors.Is(err, fs.ErrInvalid) {
+		t.Errorf("WriteAt(-10) = %v, %v; want 0, %v", n, err, fs.ErrInvalid)
 	}
 }
 
 // Verify that WriteAt doesn't work in append mode.
 func TestWriteAtInAppendMode(t *testing.T) {
 	vfs := NewFS()
-	f, err := vfs.OpenFile("write_at_in_append_mode.txt", os.O_APPEND|os.O_CREATE, 0666)
+	f, err := vfs.OpenFile("write_at_in_append_mode.txt", os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		t.Fatalf("OpenFile: %v", err)
 	}
 	defer f.Close()
 
 	_, err = f.WriteAt([]byte(""), 1)
-	if err != os.ErrPermission {
+	if !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("f.WriteAt returned %v, expected %v", err, os.ErrPermission)
 	}
 }
 
-func writeFile(vfs absfs.FileSystem, t *testing.T, fname string, flag int, text string) string {
-	f, err := vfs.OpenFile(fname, flag, 0666)
+//nolint:unparam
+func writeFile(t *testing.T, vfs absfs.FileSystem, fname string, flag int, text string) string {
+	t.Helper()
+
+	f, err := vfs.OpenFile(fname, flag, 0o666)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -1092,25 +1124,26 @@ func writeFile(vfs absfs.FileSystem, t *testing.T, fname string, flag int, text 
 		t.Fatalf("WriteString: %d, %v", n, err)
 	}
 	f.Close()
-	data, err := ioutil.ReadFile(vfs, fname)
+	data, err := vfs.ReadFile(fname)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
+
 	return string(data)
 }
 
 func TestAppend(t *testing.T) {
 	vfs := NewFS()
 	const f = "append.txt"
-	s := writeFile(vfs, t, f, os.O_CREATE|os.O_TRUNC|os.O_RDWR, "new")
+	s := writeFile(t, vfs, f, os.O_CREATE|os.O_TRUNC|os.O_RDWR, "new")
 	if s != "new" {
 		t.Fatalf("writeFile: have %q want %q", s, "new")
 	}
-	s = writeFile(vfs, t, f, os.O_APPEND|os.O_RDWR, "|append")
+	s = writeFile(t, vfs, f, os.O_APPEND|os.O_RDWR, "|append")
 	if s != "new|append" {
 		t.Fatalf("writeFile: have %q want %q", s, "new|append")
 	}
-	s = writeFile(vfs, t, f, os.O_CREATE|os.O_APPEND|os.O_RDWR, "|append")
+	s = writeFile(t, vfs, f, os.O_CREATE|os.O_APPEND|os.O_RDWR, "|append")
 	if s != "new|append|append" {
 		t.Fatalf("writeFile: have %q want %q", s, "new|append|append")
 	}
@@ -1118,25 +1151,27 @@ func TestAppend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	s = writeFile(vfs, t, f, os.O_CREATE|os.O_APPEND|os.O_RDWR, "new&append")
+	s = writeFile(t, vfs, f, os.O_CREATE|os.O_APPEND|os.O_RDWR, "new&append")
 	if s != "new&append" {
 		t.Fatalf("writeFile: after append have %q want %q", s, "new&append")
 	}
-	s = writeFile(vfs, t, f, os.O_CREATE|os.O_RDWR, "old")
+	s = writeFile(t, vfs, f, os.O_CREATE|os.O_RDWR, "old")
 	if s != "old&append" {
 		t.Fatalf("writeFile: after create have %q want %q", s, "old&append")
 	}
-	s = writeFile(vfs, t, f, os.O_CREATE|os.O_TRUNC|os.O_RDWR, "new")
+	s = writeFile(t, vfs, f, os.O_CREATE|os.O_TRUNC|os.O_RDWR, "new")
 	if s != "new" {
 		t.Fatalf("writeFile: after truncate have %q want %q", s, "new")
 	}
 }
 
 func TestModTime(t *testing.T) {
+	is := is.New(t)
+
 	vfs := NewFS()
 
 	tBeforeWrite := time.Now()
-	ioutil.WriteFile(vfs, "/readme.txt", []byte{0, 0, 0}, 0666)
+	is.NoErr(vfs.WriteFile("/readme.txt", []byte{0, 0, 0}, 0o666))
 	fi, _ := vfs.Stat("/readme.txt")
 	mtimeAfterWrite := fi.ModTime()
 
@@ -1144,9 +1179,9 @@ func TestModTime(t *testing.T) {
 		t.Error("Open should modify mtime")
 	}
 
-	f, err := vfs.OpenFile("/readme.txt", os.O_RDONLY, 0666)
+	f, err := vfs.OpenFile("/readme.txt", os.O_RDONLY, 0o666)
 	if err != nil {
-		t.Fatalf("Could not open file: %s", err)
+		t.Fatalf("Could not open file: %v", err)
 	}
 	f.Close()
 	tAfterRead := fi.ModTime()

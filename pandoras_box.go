@@ -9,7 +9,7 @@ import (
 
 var box *Box
 
-func InitGlobalBox() {
+func init() {
 	box = NewBox()
 }
 
@@ -107,8 +107,4 @@ func Getwd(vfs bool) (string, error) {
 
 func GetTempDir(vfs bool) string {
 	return box.GetTempDir(vfs)
-}
-
-func Close() {
-	box.Close()
 }

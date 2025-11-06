@@ -1,7 +1,7 @@
 package inode
 
 import (
-	filepath "path" // force forward slash separators on all OSs
+	"path" // force forward slash separators on all OSs
 	"strings"
 )
 
@@ -9,11 +9,11 @@ import (
 // path then an absolute path is constructed by using cwd as the current
 // working directory.
 func Abs(cwd, name string) string {
-	if filepath.IsAbs(name) {
+	if path.IsAbs(name) {
 		return name
 	}
 
-	return filepath.Join(cwd, name)
+	return path.Join(cwd, name)
 }
 
 // PopPath returns the first name in `path` and the rest of the `path` string.

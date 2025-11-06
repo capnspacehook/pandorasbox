@@ -17,8 +17,8 @@ import (
 type Inode struct {
 	sync.RWMutex
 
-	Ino   uint64
-	Mode  fs.FileMode
+	Ino   uint64      // should never change
+	Mode  fs.FileMode // should never change
 	Nlink uint64
 	Size  int64
 
@@ -96,7 +96,7 @@ func (n *Inode) Link(name string, child *Inode) error {
 	entry := &DirEntry{name, child}
 
 	if x < len(n.Dir) && n.Dir[x].Name == name {
-		n.linkswapi(x, entry)
+		n.linkSwapi(x, entry)
 		return nil
 	}
 	n.linki(x, entry)
@@ -260,7 +260,7 @@ func (n *Inode) unlinki(i int) {
 	n.modified()
 }
 
-func (n *Inode) linkswapi(i int, entry *DirEntry) {
+func (n *Inode) linkSwapi(i int, entry *DirEntry) {
 	n.Dir[i].Inode.countDown()
 	n.Dir[i] = entry
 	n.Dir[i].Inode.countUp()
