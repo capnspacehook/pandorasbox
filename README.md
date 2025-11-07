@@ -4,7 +4,7 @@
 
 `pandorasbox` is a Go package that allows for simple use of both a host's filesystem, and a virtual filesystem.
 
-The design goal of Pandora's Box is to easily facilitate the use of a transparently-encrypted VFS (virtual filesystem), and the host's filesystem. It does this by providing functions and methods that operate and look the same as the Go standard library `os` package. If you want to interact with the VFS, pass in a path that starts with `vfs://`, and Pandora's Box will automatically use the VFS. Otherwise, the host's filesystem will be used.
+The design goal of Pandora's Box is to easily facilitate the use of a transparently-encrypted VFS (virtual filesystem) and the host's filesystem. It does this by providing functions and methods that operate and look the same as the Go standard library `os` package. If you want to interact with the VFS, pass in a path that starts with `vfs://`, and Pandora's Box will automatically use the VFS. Otherwise, the host's filesystem will be used.
 
 ## Using Pandora's Box
 
@@ -23,12 +23,12 @@ func CopyFile(srcFile, dstFile string) error {
     in, err := os.Open(srcFile)
     defer in.Close()
     if err != nil {
-    return err
+      return err
     }
 
     _, err = io.Copy(out, in)
     if err != nil {
-    return err
+      return err
     }
 
     return nil
@@ -39,10 +39,6 @@ All it takes to make this function VFS-friendly is switching from using `os` to 
 
 ```go
 import box "github.com/capnspacehook/pandorasbox"
-
-func init() {
-    box.InitGlobalBox()
-}
 
 func CopyFile(srcFile, dstFile string) error {
     out, err := box.Create(dstFile)
@@ -68,7 +64,6 @@ func CopyFile(srcFile, dstFile string) error {
 
 ### Global vs. Local VFS
 
-You probably noticed the call to `box.InitGlobalBox()` in the last example. This has to be called **before** the global VFS can be used. 
 For ease of use, Pandora's box provides a global `Box` that is easily accessible, but in some cases a local `Box` may be desired. If you don't wish to use the global `Box`, don't call `box.InitGlobalBox()`, instead create a locally scoped `Box` by calling `box.NewBox()`. This allows you to easily pass a `Box` into functions or methods or embed a `Box` in a struct.
 
 ### `io/ioutil` and `path/filepath` Functions
@@ -78,17 +73,10 @@ Pandora's Box also provides helper functions that are identical to functions fro
 Example (error handling omitted):
 
 ```go 
-import (
-    box "github.com/capnspacehook/pandorasbox"
-    "github.com/capnspacehook/pandorasbox/ioutil"
-)
-
-func init() {
-    box.InitGlobalBox()
-}
+import box "github.com/capnspacehook/pandorasbox"
 
 func WriteFileGlobalBox() {
-    box.WriteFile("vfs://file.txt", []byte("Testing testing 1 2 3"), 0644)
+    box.WriteFile("vfs://file.txt", []byte("Testing testing 1 2 3"), 0o644)
     data, _ := box.ReadFile("vfs://file.txt")
     fmt.Println(string(data))
 }
@@ -96,8 +84,8 @@ func WriteFileGlobalBox() {
 func WriteFileLocalBox() {
     myBox := box.NewBox()
 
-    ioutil.WriteFile(myBox, "vfs://file.txt", []byte("Testing testing 1 2 3"), 0644)
-    data, _ := ioutil.ReadFile(myBox, "vfs://file.txt")
+    myBox.WriteFile("vfs://file.txt", []byte("Testing testing 1 2 3"), 0o644)
+    data, _ := myBox.ReadFile("vfs://file.txt")
     fmt.Println(string(data))
 }
 ```
@@ -108,7 +96,10 @@ If for some reason you need to force the usage of either the host's filesystem o
 
 ### Memory Safety
 
-All files in the VFS are encrypted when not in use. When files from the VFS are opened, they are decrypted for the duration of the call that opened them. VFS files are then re-encrypted with a different random key when reading or writing from them is finished. That is, files in the VFS are only decrypted in memory for a brief time while the underlying data needs to be accessed. In other words, calling `Open()` on a VFS file **will not** decrypt it until `Close()` is called on it. It will only be decrypted in memory when it is internally opened by methods like `Read()`, `Write()`, `Truncate()`, etc. And it is immediately closed afterwards. So opening a VFS file and calling `Read()` on it 3 times will decrypt and re-encrypt it 3 times. This is to make sure data is encrypted in memory whenever possible.
+All files in the VFS are encrypted when not in use. When files from the VFS are opened, they are decrypted for the duration of the call that opened them. VFS files are then re-encrypted with a different random key when reading or writing from them is finished. That is, files in the VFS are only decrypted in memory for a brief time while the underlying data needs to be accessed. In other words, calling `Open()` on a VFS file **will not** decrypt it until `Close()` is called on it. It will only be decrypted in memory when it is internally opened by methods like `Read()`, `Write()`, `Truncate()`, etc. Internal decrypted buffers are wiped as soon as possible. So opening a VFS file and calling `Read()` on it 3 times will decrypt and re-encrypt it 3 times. This is to make sure data is encrypted in memory whenever possible.
+
+`pandorasbox` never wipes buffers that are owned by the user, so you will need to wipe buffers yourself when calling `Write()`
+for example if you don't want the buffer to stick around in memory unencrypted.
 
 For more information about the exact cryptographic code and algorithms used, refer to this repo: https://github.com/awnumar/memguard.
 

@@ -57,7 +57,7 @@ const (
 
 // FuzzVFSRace preforms random operations on a virtual filesystem in
 // two different goroutines and checks that operations don't fail
-// when unexpectedly. It also tests that operations preform as expected
+// unexpectedly. It also tests that operations preform as expected
 // when multiple operations are preformed concurrently. It should be
 // run with the race detector enabled for best results.
 func FuzzVFSRace(f *testing.F) {
