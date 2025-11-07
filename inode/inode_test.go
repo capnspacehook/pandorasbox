@@ -7,6 +7,8 @@ import (
 	filepath "path"
 	"strings"
 	"testing"
+
+	"github.com/matryer/is"
 )
 
 func TestPopPath(t *testing.T) {
@@ -33,26 +35,29 @@ func TestPopPath(t *testing.T) {
 			t.Fatalf("%d: %s != %s", i, trim, test.Trim)
 		}
 	}
-
 }
 
 func TestInode(t *testing.T) {
+	is := is.New(t)
+
 	var ino Ino
-	root := ino.NewDir(0777)
+	root := ino.NewDir(0o777)
 	children := make([]*Inode, 100)
 	for i := range children {
 		ino++
-		children[i] = ino.New(0666)
+		children[i] = ino.New(0o666)
 	}
 
-	NlinkTest := func(location string, count int) {
+	nLinkTest := func(t *testing.T, location string, count int) {
+		t.Helper()
+
 		for _, n := range children {
 			if n.Nlink != uint64(count) {
 				t.Fatalf("%s: incorrect link count %d != %d", location, n.Nlink, count)
 			}
 		}
 	}
-	NlinkTest("NLT 1", 0)
+	nLinkTest(t, "NLT 1", 0)
 
 	paths := make(map[string]*Inode)
 	paths["/"] = root
@@ -68,12 +73,11 @@ func TestInode(t *testing.T) {
 		}
 	}
 
-	NlinkTest("NLT 2", 1)
+	nLinkTest(t, "NLT 2", 1)
 
 	CWD := "/"
 	cwd := &CWD
-	Mkdir := func(path string, perm os.FileMode) error {
-
+	Mkdir := func(path string, _ os.FileMode) error {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(*cwd, path)
 		}
@@ -93,10 +97,10 @@ func TestInode(t *testing.T) {
 		}
 
 		// build the node
-		dirnode := ino.NewDir(0777)
-		dirnode.Link("..", parent)
+		dirnode := ino.NewDir(0o777)
+		is.NoErr(dirnode.Link("..", parent))
 		// add a link to the parent directory
-		parent.Link(name, dirnode)
+		is.NoErr(parent.Link(name, dirnode))
 
 		paths[path] = dirnode
 
@@ -106,16 +110,10 @@ func TestInode(t *testing.T) {
 		return nil // done?
 	}
 
-	err := Mkdir("dir0001", 0777)
-	if err != nil {
-		t.Fatal(err)
-	}
+	is.NoErr(Mkdir("dir0001", 0o777))
 
 	CWD = "/dir0001"
-	err = Mkdir("dir0002", 0777)
-	if err != nil {
-		t.Fatal(err)
-	}
+	is.NoErr(Mkdir("dir0002", 0o777))
 
 	dirnode, ok := paths["/dir0001/dir0002"]
 	if !ok {
@@ -128,14 +126,14 @@ func TestInode(t *testing.T) {
 		if !strings.HasPrefix(name, "file") {
 			continue
 		}
-		dirnode.Link(name, n)
+		is.NoErr(dirnode.Link(name, n))
 		name = filepath.Join("/dir0001/dir0002", name)
 		paths[name] = n
 	}
 
-	NlinkTest("NLT 3", 2)
+	nLinkTest(t, "NLT 3", 2)
 
-	for path, _ := range paths {
+	for path := range paths {
 		if !strings.HasPrefix(path, "/file") {
 			continue
 		}
@@ -148,7 +146,7 @@ func TestInode(t *testing.T) {
 		delete(paths, path)
 	}
 
-	NlinkTest("NLT 4", 1)
+	nLinkTest(t, "NLT 4", 1)
 
 	type testcase struct {
 		Path string
@@ -185,10 +183,7 @@ func TestInode(t *testing.T) {
 
 	go func() {
 		defer close(testoutput)
-		err = walk(root, "/")
-		if err != nil {
-			t.Fatal(err)
-		}
+		is.NoErr(walk(root, "/"))
 	}()
 
 	tests := []struct {
@@ -322,12 +317,12 @@ func TestInode(t *testing.T) {
 func TestLinkUnlinkMove(t *testing.T) {
 	ino := new(Ino)
 
-	root := ino.NewDir(0777)
+	root := ino.NewDir(0o777)
 	dirs := make([]*Inode, 2)
 	var err error
 
 	for i := range dirs {
-		dirs[i] = ino.NewDir(0777)
+		dirs[i] = ino.NewDir(0o777)
 		err = root.Link(fmt.Sprintf("dir%02d", i), dirs[i])
 		if err != nil {
 			t.Fatal(err)
@@ -336,7 +331,7 @@ func TestLinkUnlinkMove(t *testing.T) {
 
 	files := make([]*Inode, 2)
 	for i := range files {
-		files[i] = ino.New(0666)
+		files[i] = ino.New(0o666)
 		err = root.Link(fmt.Sprintf("file_%04d.txt", i), files[i])
 		if err != nil {
 			t.Fatal(err)
@@ -367,7 +362,7 @@ func TestLinkUnlinkMove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = root.Rename("/file_0001.txt", "/dir01")
+	err = root.Rename("/file_0001.txt", "/dir01/file_0001.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +398,7 @@ func TestLinkUnlinkMove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = root.Rename("/dir01", "/dir00")
+	err = root.Rename("/dir01", "/dir00/dir01")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,13 +430,15 @@ func TestLinkUnlinkMove(t *testing.T) {
 }
 
 func TestResolve(t *testing.T) {
+	is := is.New(t)
+
 	ino := new(Ino)
 
 	var root, parent, dir *Inode
-	root = ino.NewDir(0777)
+	root = ino.NewDir(0o777)
 	parent = root
 
-	dir = ino.NewDir(0777)
+	dir = ino.NewDir(0o777)
 	err := parent.Link("tmp", dir)
 	if err != nil {
 		t.Fatal(err)
@@ -452,26 +449,17 @@ func TestResolve(t *testing.T) {
 	}
 
 	parent = dir
-	dir = ino.NewDir(0777)
-	parent.Link("foo", dir)
-	err = dir.Link("..", parent)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir = ino.NewDir(0o777)
+	is.NoErr(parent.Link("foo", dir))
+	is.NoErr(dir.Link("..", parent))
 
-	dir = ino.NewDir(0777)
-	parent.Link("bar", dir)
-	err = dir.Link("..", parent)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir = ino.NewDir(0o777)
+	is.NoErr(parent.Link("bar", dir))
+	is.NoErr(dir.Link("..", parent))
 
-	dir = ino.NewDir(0777)
-	parent.Link("bat", dir)
-	err = dir.Link("..", parent)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir = ino.NewDir(0o777)
+	is.NoErr(parent.Link("bat", dir))
+	is.NoErr(dir.Link("..", parent))
 
 	tests := []struct {
 		Path string
@@ -582,10 +570,7 @@ func TestResolve(t *testing.T) {
 	}
 	go func() {
 		defer close(testoutput)
-		err = walk(root, "/")
-		if err != nil {
-			t.Fatal(err)
-		}
+		is.NoErr(walk(root, "/"))
 	}()
 
 	i := 0
@@ -640,7 +625,6 @@ func TestResolve(t *testing.T) {
 			}
 		}
 	})
-
 }
 
 func Walk(node *Inode, path string, fn func(path string, n *Inode) error) error {

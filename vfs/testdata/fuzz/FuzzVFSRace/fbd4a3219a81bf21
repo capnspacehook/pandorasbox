@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("NNNNNN")
+[]byte("S")
+uint64(0)
+uint64(18)

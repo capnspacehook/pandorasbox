@@ -1,0 +1,19 @@
+name: Vulnerability scan
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - "*"
+  schedule:
+    - cron: "00 13 * * 1"
+
+  workflow_dispatch: {}
+
+jobs:
+  vuln-check:
+    permissions:
+      contents: read
+    uses: capnspacehook/go-workflows/.github/workflows/vuln.yml@master

@@ -9,7 +9,6 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 	"unsafe"
 )
@@ -18,8 +17,8 @@ import (
 type Inode struct {
 	sync.RWMutex
 
-	Ino   uint64
-	Mode  fs.FileMode
+	Ino   uint64      // should never change
+	Mode  fs.FileMode // should never change
 	Nlink uint64
 	Size  int64
 
@@ -97,7 +96,7 @@ func (n *Inode) Link(name string, child *Inode) error {
 	entry := &DirEntry{name, child}
 
 	if x < len(n.Dir) && n.Dir[x].Name == name {
-		n.linkswapi(x, entry)
+		n.linkSwapi(x, entry)
 		return nil
 	}
 	n.linki(x, entry)
@@ -118,7 +117,7 @@ func (n *Inode) Unlink(name string) error {
 	x := n.find(name)
 
 	if x == n.Dir.Len() || n.Dir[x].Name != name {
-		return syscall.ENOENT // os.ErrNotExist
+		return fs.ErrNotExist
 	}
 
 	n.unlinki(x)
@@ -169,7 +168,7 @@ func (n *Inode) Rename(oldpath, newpath string) error {
 	var rename string
 	tnode, err := n.Resolve(newpath)
 	if err == nil && tnode.IsDir() {
-		return syscall.EEXIST
+		return fs.ErrExist
 	}
 	if (err == nil && !tnode.IsDir()) || (err != nil && errors.Is(err, fs.ErrNotExist)) {
 		var tdir string
@@ -189,7 +188,7 @@ func (n *Inode) Rename(oldpath, newpath string) error {
 		return err
 	}
 	if len(rename) > 0 {
-		name, rename = rename, name
+		name = rename
 	}
 	err = p.Unlink(name)
 	if err != nil {
@@ -227,7 +226,7 @@ func (n *Inode) Resolve(path string) (*Inode, error) {
 		return nn.Resolve(trim)
 	}
 
-	return nil, syscall.ENOENT // os.ErrNotExist
+	return nil, fs.ErrNotExist
 }
 
 func (n *Inode) accessed() {
@@ -261,7 +260,7 @@ func (n *Inode) unlinki(i int) {
 	n.modified()
 }
 
-func (n *Inode) linkswapi(i int, entry *DirEntry) {
+func (n *Inode) linkSwapi(i int, entry *DirEntry) {
 	n.Dir[i].Inode.countDown()
 	n.Dir[i] = entry
 	n.Dir[i].Inode.countUp()

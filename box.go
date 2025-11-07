@@ -5,9 +5,7 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/awnumar/memguard"
 	"github.com/capnspacehook/pandorasbox/absfs"
-	"github.com/capnspacehook/pandorasbox/ioutil"
 	"github.com/capnspacehook/pandorasbox/osfs"
 	"github.com/capnspacehook/pandorasbox/vfs"
 )
@@ -75,10 +73,10 @@ func (b *Box) ReadDir(dirname string) ([]fs.DirEntry, error) {
 
 func (b *Box) WriteFile(filename string, data []byte, perm fs.FileMode) error {
 	if vfsFilename, ok := ConvertVFSPath(filename); ok {
-		return ioutil.WriteFile(b.vfs, vfsFilename, data, perm)
+		return b.vfs.WriteFile(vfsFilename, data, perm)
 	}
 
-	return ioutil.WriteFile(b.osfs, filename, data, perm)
+	return os.WriteFile(filename, data, perm)
 }
 
 func (b *Box) Mkdir(name string, perm fs.FileMode) error {
@@ -216,8 +214,4 @@ func (b *Box) GetTempDir(vfsMode bool) string {
 	}
 
 	return b.osfs.TempDir()
-}
-
-func (b *Box) Close() {
-	memguard.Purge()
 }

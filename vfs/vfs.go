@@ -6,14 +6,10 @@ import (
 	stdfs "io/fs"
 	"os"
 	"path"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
-
-	"github.com/awnumar/fastrand"
-	"github.com/awnumar/memguard"
-	"github.com/awnumar/memguard/core"
 
 	"github.com/capnspacehook/pandorasbox/absfs"
 	"github.com/capnspacehook/pandorasbox/inode"
@@ -29,7 +25,7 @@ const (
 )
 
 type stdFS struct {
-	*pbFS
+	*virtualFS
 }
 
 func (fs stdFS) Open(name string) (stdfs.File, error) {
@@ -37,7 +33,7 @@ func (fs stdFS) Open(name string) (stdfs.File, error) {
 		return nil, err
 	}
 
-	return fs.pbFS.Open(name)
+	return fs.virtualFS.Open(name)
 }
 
 func (fs stdFS) ReadDir(name string) ([]stdfs.DirEntry, error) {
@@ -45,7 +41,7 @@ func (fs stdFS) ReadDir(name string) ([]stdfs.DirEntry, error) {
 		return nil, err
 	}
 
-	return fs.pbFS.ReadDir(name)
+	return fs.virtualFS.ReadDir(name)
 }
 
 func (fs stdFS) ReadFile(name string) ([]byte, error) {
@@ -53,7 +49,7 @@ func (fs stdFS) ReadFile(name string) ([]byte, error) {
 		return nil, err
 	}
 
-	return fs.pbFS.ReadFile(name)
+	return fs.virtualFS.ReadFile(name)
 }
 
 func (fs stdFS) StatFS(name string) (stdfs.FileInfo, error) {
@@ -61,7 +57,7 @@ func (fs stdFS) StatFS(name string) (stdfs.FileInfo, error) {
 		return nil, err
 	}
 
-	return fs.pbFS.Stat(name)
+	return fs.virtualFS.Stat(name)
 }
 
 func checkPath(name, op string) error {
@@ -74,7 +70,7 @@ func checkPath(name, op string) error {
 	return nil
 }
 
-type pbFS struct {
+type virtualFS struct {
 	mtx *sync.RWMutex
 
 	root *inode.Inode
@@ -82,51 +78,53 @@ type pbFS struct {
 	dir  *inode.Inode
 	ino  *inode.Ino
 
-	data []*sealedFile
+	sfiles []*sealedFile
 }
 
 func NewFS() absfs.FileSystem {
-	fs := new(pbFS)
+	fs := new(virtualFS)
 	fs.mtx = new(sync.RWMutex)
 	fs.ino = new(inode.Ino)
 
-	fs.root = fs.ino.NewDir(0755)
+	fs.root = fs.ino.NewDir(0o755)
 	fs.cwd = "/"
 	fs.dir = fs.root
-	fs.data = make([]*sealedFile, 2)
+	fs.sfiles = make([]*sealedFile, 2)
 
 	return fs
 }
 
-func (fs *pbFS) FS() stdfs.FS {
+func (fs *virtualFS) FS() stdfs.FS {
 	fs.mtx.RLock()
 	defer fs.mtx.RUnlock()
 
 	// set cwd to root, as paths are not allowed to start with a slash
 	// in io/fs filesystems
-	return stdFS{pbFS: &pbFS{
-		mtx:  fs.mtx,
-		root: fs.root,
-		cwd:  "/",
-		dir:  fs.dir,
-		ino:  fs.ino,
-		data: fs.data,
+	return stdFS{virtualFS: &virtualFS{
+		mtx:    fs.mtx,
+		root:   fs.root,
+		cwd:    "/",
+		dir:    fs.dir,
+		ino:    fs.ino,
+		sfiles: fs.sfiles,
 	}}
 }
 
-func (fs *pbFS) Open(name string) (absfs.File, error) {
+func (fs *virtualFS) Open(name string) (absfs.File, error) {
 	return fs.OpenFile(name, os.O_RDONLY, 0)
 }
 
-func (fs *pbFS) OpenFile(name string, flag int, perm stdfs.FileMode) (absfs.File, error) {
+func (fs *virtualFS) OpenFile(name string, flag int, perm stdfs.FileMode) (absfs.File, error) {
 	if name == "/" {
-		data := fs.data[int(fs.root.Ino)]
-		return &file{
+		fs.mtx.RLock()
+		sfile := fs.sfiles[int(fs.root.Ino)]
+		fs.mtx.RUnlock()
+		return &vfsFile{
 			fs:    fs,
 			name:  name,
 			flags: flag,
 			node:  fs.root,
-			data:  data,
+			sfile: sfile,
 		}, nil
 	}
 
@@ -145,28 +143,36 @@ func (fs *pbFS) OpenFile(name string, flag int, perm stdfs.FileMode) (absfs.File
 
 	appendFile := flag&os.O_APPEND != 0
 	if name == "." {
-		data := fs.data[int(fs.dir.Ino)]
-		file := &file{
+		fs.mtx.Lock()
+		sfile := fs.sfiles[int(fs.dir.Ino)]
+		fs.mtx.Unlock()
+
+		file := &vfsFile{
 			fs:    fs,
 			name:  name,
 			flags: flag,
 			node:  fs.dir,
-			data:  data,
+			sfile: sfile,
 		}
-		if data != nil {
+		if sfile != nil {
 			if appendFile {
-				file.offset = fs.dir.Size
+				fs.dir.RLock()
+				file.offset.Store(fs.dir.Size)
+				fs.dir.RUnlock()
 			}
-			data.f = file
 		}
 
 		return file, nil
 	}
 
+	fs.mtx.Lock()
+	defer fs.mtx.Unlock()
+
 	wd := fs.root
 	if !path.IsAbs(name) {
 		wd = fs.dir
 	}
+
 	var exists bool
 	node, err := wd.Resolve(name)
 	if err == nil {
@@ -186,7 +192,7 @@ func (fs *pbFS) OpenFile(name string, flag int, perm stdfs.FileMode) (absfs.File
 
 	// error if it does not exist, and we are not allowed to create it.
 	if !exists && !create {
-		return nil, &stdfs.PathError{Op: "open", Path: name, Err: syscall.ENOENT}
+		return nil, &stdfs.PathError{Op: "open", Path: name, Err: stdfs.ErrNotExist}
 	}
 	if exists {
 		// err if exclusive create is required
@@ -198,19 +204,7 @@ func (fs *pbFS) OpenFile(name string, flag int, perm stdfs.FileMode) (absfs.File
 				return nil, &stdfs.PathError{Op: "open", Path: name, Err: syscall.EISDIR}
 			}
 		}
-
-		// if we must truncate the file
-		if truncate {
-			sfile := fs.data[int(node.Ino)]
-			sfile.ciphertext = nil
-			sfile.key = nil
-		}
 	} else {
-		// error if we cannot create the file
-		if !create {
-			return nil, &stdfs.PathError{Op: "open", Path: name, Err: syscall.ENOENT}
-		}
-
 		// Create write-able file
 		node = fs.ino.New(perm)
 		err := parent.Link(filename, node)
@@ -218,57 +212,61 @@ func (fs *pbFS) OpenFile(name string, flag int, perm stdfs.FileMode) (absfs.File
 			fs.ino.SubIno()
 			return nil, &stdfs.PathError{Op: "open", Path: name, Err: err}
 		}
-		fs.data = append(fs.data, new(sealedFile))
-	}
-	data := fs.data[int(node.Ino)]
 
-	file := &file{
+		file := sealedFile{}
+		fs.sfiles = append(fs.sfiles, &file)
+	}
+	sfile := fs.sfiles[int(node.Ino)]
+
+	file := &vfsFile{
 		fs:    fs,
 		name:  name,
 		flags: flag,
 		node:  node,
-		data:  data,
+		sfile: sfile,
 	}
-	if data != nil {
+	if sfile != nil && (truncate || appendFile) {
 		if truncate {
-			node.Size = 0
+			if err := file.Truncate(0); err != nil {
+				return nil, &stdfs.PathError{Op: "open", Path: name, Err: err}
+			}
 		}
 		if appendFile {
-			file.offset = node.Size
+			file.offset.Store(node.Size)
 		}
-		data.f = file
 	}
 
 	return file, nil
 }
 
-func (fs *pbFS) Create(name string) (absfs.File, error) {
-	return fs.OpenFile(name, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
+func (fs *virtualFS) Create(name string) (absfs.File, error) {
+	return fs.OpenFile(name, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
 }
 
-func (fs *pbFS) ReadFile(name string) ([]byte, error) {
+func (fs *virtualFS) ReadFile(name string) ([]byte, error) {
 	f, err := fs.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 
-	// will never error
-	fi, _ := f.Stat()
+	vf := f.(*vfsFile)
+	vf.node.RLock()
+	size := vf.node.Size
+	vf.node.RUnlock()
 
-	data := make([]byte, fi.Size())
+	data := make([]byte, size)
 	n, err := f.Read(data)
 	if err == nil && n < len(data) {
-		err = io.ErrShortWrite
+		err = io.ErrUnexpectedEOF
 	}
-	if err1 := f.Close(); err == nil {
-		err = err1
+	if closeErr := f.Close(); closeErr != nil {
+		err = errors.Join(err, closeErr)
 	}
 
 	return data, err
 }
 
-func (fs *pbFS) ReadDir(name string) ([]stdfs.DirEntry, error) {
+func (fs *virtualFS) ReadDir(name string) ([]stdfs.DirEntry, error) {
 	f, err := fs.Open(name)
 	if err != nil {
 		return nil, err
@@ -279,12 +277,14 @@ func (fs *pbFS) ReadDir(name string) ([]stdfs.DirEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name() < dirs[j].Name() })
+	slices.SortFunc(dirs, func(de1, de2 stdfs.DirEntry) int {
+		return strings.Compare(de1.Name(), de2.Name())
+	})
 
 	return dirs, nil
 }
 
-func (fs *pbFS) WriteFile(name string, data []byte, perm os.FileMode) error {
+func (fs *virtualFS) WriteFile(name string, data []byte, perm os.FileMode) error {
 	f, err := fs.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
@@ -300,10 +300,14 @@ func (fs *pbFS) WriteFile(name string, data []byte, perm os.FileMode) error {
 	return err
 }
 
-func (fs *pbFS) Mkdir(name string, perm stdfs.FileMode) error {
+func (fs *virtualFS) Mkdir(name string, perm stdfs.FileMode) error {
 	fs.mtx.Lock()
 	defer fs.mtx.Unlock()
 
+	return fs.mkdir(name, perm)
+}
+
+func (fs *virtualFS) mkdir(name string, perm stdfs.FileMode) error {
 	wd := fs.root
 	abs := name
 	if !path.IsAbs(abs) {
@@ -326,17 +330,22 @@ func (fs *pbFS) Mkdir(name string, perm stdfs.FileMode) error {
 	}
 
 	child := fs.ino.NewDir(perm)
-	parent.Link(filename, child)
-	child.Link("..", parent)
-	fs.data = append(fs.data, new(sealedFile))
+	if err := parent.Link(filename, child); err != nil {
+		return &stdfs.PathError{Op: "mkdir", Path: filename, Err: err}
+	}
+	if err := child.Link("..", parent); err != nil {
+		return &stdfs.PathError{Op: "mkdir", Path: "..", Err: err}
+	}
+	fs.sfiles = append(fs.sfiles, new(sealedFile))
 
 	return nil
 }
 
-func (fs *pbFS) MkdirAll(name string, perm stdfs.FileMode) error {
-	fs.mtx.RLock()
+func (fs *virtualFS) MkdirAll(name string, perm stdfs.FileMode) error {
+	fs.mtx.Lock()
+	defer fs.mtx.Unlock()
+
 	name = inode.Abs(fs.cwd, name)
-	fs.mtx.RUnlock()
 
 	dirpath := ""
 	for _, p := range strings.Split(name, string(fs.Separator())) {
@@ -345,7 +354,7 @@ func (fs *pbFS) MkdirAll(name string, perm stdfs.FileMode) error {
 		}
 
 		dirpath = path.Join(dirpath, p)
-		if err := fs.Mkdir(dirpath, perm); err != nil {
+		if err := fs.mkdir(dirpath, perm); err != nil {
 			if !errors.Is(err, stdfs.ErrExist) {
 				return err
 			}
@@ -355,11 +364,14 @@ func (fs *pbFS) MkdirAll(name string, perm stdfs.FileMode) error {
 	return nil
 }
 
-func (fs *pbFS) Stat(name string) (stdfs.FileInfo, error) {
+func (fs *virtualFS) Stat(name string) (stdfs.FileInfo, error) {
 	if name == "/" {
 		return &FileInfo{"/", fs.root}, nil
 	}
+
+	fs.mtx.RLock()
 	node, err := fs.fileStat(fs.cwd, name)
+	fs.mtx.RUnlock()
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +379,7 @@ func (fs *pbFS) Stat(name string) (stdfs.FileInfo, error) {
 	return &FileInfo{path.Base(name), node}, nil
 }
 
-func (fs *pbFS) fileStat(cwd, name string) (*inode.Inode, error) {
+func (fs *virtualFS) fileStat(cwd, name string) (*inode.Inode, error) {
 	name = inode.Abs(cwd, name)
 	if name != "/" {
 		name = strings.TrimLeft(name, "/")
@@ -380,11 +392,11 @@ func (fs *pbFS) fileStat(cwd, name string) (*inode.Inode, error) {
 	return node, nil
 }
 
-func (fs *pbFS) Lstat(name string) (stdfs.FileInfo, error) {
+func (fs *virtualFS) Lstat(name string) (stdfs.FileInfo, error) {
 	return fs.Stat(name)
 }
 
-func (fs *pbFS) Rename(oldpath, newpath string) error {
+func (fs *virtualFS) Rename(oldpath, newpath string) error {
 	linkErr := os.LinkError{
 		Op:  "rename",
 		Old: oldpath,
@@ -396,6 +408,9 @@ func (fs *pbFS) Rename(oldpath, newpath string) error {
 		return &linkErr
 	}
 
+	fs.mtx.Lock()
+	defer fs.mtx.Unlock()
+
 	if !path.IsAbs(oldpath) {
 		oldpath = path.Join(fs.cwd, oldpath)
 	}
@@ -403,6 +418,7 @@ func (fs *pbFS) Rename(oldpath, newpath string) error {
 	if !path.IsAbs(newpath) {
 		newpath = path.Join(fs.cwd, newpath)
 	}
+
 	err := fs.root.Rename(oldpath, newpath)
 	if err != nil {
 		linkErr.Err = err
@@ -412,7 +428,10 @@ func (fs *pbFS) Rename(oldpath, newpath string) error {
 	return nil
 }
 
-func (fs *pbFS) Remove(name string) (err error) {
+func (fs *virtualFS) Remove(name string) (err error) {
+	fs.mtx.Lock()
+	defer fs.mtx.Unlock()
+
 	wd := fs.root
 	abs := name
 	if !path.IsAbs(abs) {
@@ -441,10 +460,19 @@ func (fs *pbFS) Remove(name string) (err error) {
 		}
 	}
 
-	return parent.Unlink(filename)
+	ino := parent.Ino
+	if err := parent.Unlink(filename); err != nil {
+		return &stdfs.PathError{Op: "remove", Path: name, Err: err}
+	}
+	fs.sfiles[int(ino)] = nil
+
+	return nil
 }
 
-func (fs *pbFS) RemoveAll(name string) error {
+func (fs *virtualFS) RemoveAll(name string) error {
+	fs.mtx.Lock()
+	defer fs.mtx.Unlock()
+
 	wd := fs.root
 	abs := name
 	if !path.IsAbs(abs) {
@@ -472,79 +500,34 @@ func (fs *pbFS) RemoveAll(name string) error {
 	return parent.Unlink(filename)
 }
 
-func (fs *pbFS) Truncate(name string, size int64) error {
+func (fs *virtualFS) Truncate(name string, size int64) error {
 	if size < 0 {
-		return &stdfs.PathError{Op: "truncate", Path: name, Err: stdfs.ErrClosed}
-	}
-
-	path := inode.Abs(fs.cwd, name)
-	child, err := fs.root.Resolve(path)
-	if err != nil {
-		return err
+		return &stdfs.PathError{Op: "truncate", Path: name, Err: stdfs.ErrInvalid}
 	}
 
 	fs.mtx.RLock()
-	file := fs.data[child.Ino]
-	fs.mtx.RUnlock()
-
-	var plaintext []byte
-	if file.f.node.Size != 0 {
-		file.f.mtx.RLock()
-		key, err := file.key.Open()
-		if err != nil {
-			return err
-		}
-
-		plaintext = make([]byte, file.f.node.Size)
-		_, err = core.Decrypt(file.ciphertext, key.Bytes(), plaintext)
-		if err != nil {
-			return err
-		}
-
-		key.Destroy()
-		file.f.mtx.RUnlock()
-	} else if size == 0 { // data is already nil, no-op
-		return nil
-	}
-
-	// TODO: should this be copied in constant time?
-	if size <= file.f.node.Size {
-		plaintext = plaintext[:int(size)]
-		newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
-
-		file.f.mtx.Lock()
-		file.ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
-		file.key = newKey.Seal()
-		file.f.updateSize()
-		file.f.mtx.Unlock()
-
-		core.Wipe(plaintext)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-
-	data := make([]byte, int(size))
-	core.Move(data, plaintext)
-
-	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
-
-	file.f.mtx.Lock()
-	file.ciphertext, err = core.Encrypt(data, newKey.Bytes())
-	file.key = newKey.Seal()
-	file.f.updateSize()
-	file.f.mtx.Unlock()
-
-	core.Wipe(data)
+	path := inode.Abs(fs.cwd, name)
+	child, err := fs.root.Resolve(path)
 	if err != nil {
+		fs.mtx.RUnlock()
 		return err
 	}
 
-	return nil
+	sfile := fs.sfiles[child.Ino]
+	fs.mtx.RUnlock()
+
+	file := vfsFile{
+		fs:    fs,
+		name:  name,
+		flags: os.O_WRONLY,
+		node:  child,
+		sfile: sfile,
+	}
+
+	return file.Truncate(size)
 }
 
-func (fs *pbFS) WalkDir(root string, fn stdfs.WalkDirFunc) error {
+func (fs *virtualFS) WalkDir(root string, fn stdfs.WalkDirFunc) error {
 	if path.IsAbs(root) {
 		if root == "/" {
 			root = "."
@@ -556,7 +539,7 @@ func (fs *pbFS) WalkDir(root string, fn stdfs.WalkDirFunc) error {
 	return stdfs.WalkDir(fs.FS(), root, fn)
 }
 
-func (fs *pbFS) Abs(p string) (string, error) {
+func (fs *virtualFS) Abs(p string) (string, error) {
 	if strings.HasPrefix(p, string(PathSeparator)) {
 		return path.Clean(p), nil
 	}
@@ -569,15 +552,15 @@ func (fs *pbFS) Abs(p string) (string, error) {
 	return path.Join(wd, p), nil
 }
 
-func (fs *pbFS) Separator() uint8 {
+func (fs *virtualFS) Separator() uint8 {
 	return PathSeparator
 }
 
-func (fs *pbFS) ListSeparator() uint8 {
+func (fs *virtualFS) ListSeparator() uint8 {
 	return PathListSeparator
 }
 
-func (fs *pbFS) Chdir(name string) (err error) {
+func (fs *virtualFS) Chdir(name string) (err error) {
 	fs.mtx.Lock()
 	defer fs.mtx.Unlock()
 
@@ -609,13 +592,13 @@ func (fs *pbFS) Chdir(name string) (err error) {
 	return nil
 }
 
-func (fs *pbFS) Getwd() (dir string, err error) {
+func (fs *virtualFS) Getwd() (dir string, err error) {
 	fs.mtx.RLock()
 	defer fs.mtx.RUnlock()
 
 	return fs.cwd, nil
 }
 
-func (fs *pbFS) TempDir() string {
+func (fs *virtualFS) TempDir() string {
 	return tempDir
 }

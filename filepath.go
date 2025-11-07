@@ -3,7 +3,11 @@ package pandorasbox
 import (
 	stdpath "path"
 	"path/filepath"
+
+	"github.com/capnspacehook/pandorasbox/absfs"
 )
+
+type File = absfs.File
 
 func IsAbs(path string) bool {
 	if _, ok := ConvertVFSPath(path); ok {

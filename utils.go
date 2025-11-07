@@ -49,11 +49,12 @@ func SameFile(fi1, fi2 os.FileInfo) bool {
 	vfsfi1, fi1vfs := fi1.(*vfs.FileInfo)
 	vfsfi2, fi2vfs := fi2.(*vfs.FileInfo)
 
-	if (fi1vfs && !fi2vfs) || (!fi1vfs && fi2vfs) {
-		return false
-	} else if fi1vfs && fi2vfs {
+	switch {
+	case fi1vfs && fi2vfs:
 		return vfs.SameFile(vfsfi1, vfsfi2)
-	} else {
+	case !fi1vfs && !fi2vfs:
 		return osfs.SameFile(fi1, fi2)
+	default:
+		return false
 	}
 }

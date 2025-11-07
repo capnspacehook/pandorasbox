@@ -1,7 +1,7 @@
 package vfs
 
 import (
-	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -20,49 +20,105 @@ import (
 
 const keySize = 32
 
-type file struct {
-	mtx sync.RWMutex
+type vfsFile struct {
+	fs *virtualFS
 
-	fs *pbFS
+	// protects dirOffset
+	sync.Mutex
 
-	name  string
-	flags int
-	node  *inode.Inode
-	data  *sealedFile
+	name   string
+	flags  int
+	node   *inode.Inode
+	closed atomic.Bool
 
-	offset    int64
-	diroffset int
+	sfile *sealedFile
+
+	offset    atomic.Int64
+	dirOffset int
 }
 
+// sealedFile contains authenticated and encrypted file contents, as
+// well as a key used to decrypt the file contents
 type sealedFile struct {
-	f *file
+	// protects ciphertext and sealedKey; since sealedFiles are shared
+	// between multiple files this ensures read/write operations
+	// don't race
+	sync.RWMutex
 
 	ciphertext []byte
-	key        *memguard.Enclave
+	sealedKey  *memguard.Enclave
 }
 
-func (f *file) updateSize() {
-	if len(f.data.ciphertext) == 0 {
-		f.node.Size = 0
-		return
-	}
-
-	f.node.Size = int64(len(f.data.ciphertext) - core.Overhead)
+func (s *sealedFile) size() int {
+	return max(len(s.ciphertext)-core.Overhead, 0)
 }
 
-func (f *file) Name() string {
+func (f *vfsFile) Name() string {
 	return f.name
 }
 
-func (f *file) Read(p []byte) (int, error) {
-	n, err := f.read(p, atomic.LoadInt64(&f.offset))
-	atomic.AddInt64(&f.offset, int64(n))
+func (f *vfsFile) setOffset(offset int64) {
+	if offset < 0 {
+		panic(fmt.Sprintf("%s: negative offset: %d", f.name, offset))
+	}
+	f.offset.Store(offset)
+}
+
+func (f *vfsFile) addOffset(offset int64) int64 {
+	newOffset := f.offset.Add(offset)
+	if newOffset < 0 {
+		panic(fmt.Sprintf("%s: negative offset: %d", f.name, newOffset))
+	}
+	return newOffset
+}
+
+// decrypt returns the plaintext of the sealed file. It must be called
+// under lock.
+func (f *vfsFile) decrypt(plaintext []byte) error {
+	key, err := f.sfile.sealedKey.Open()
+	if err != nil {
+		return err
+	}
+	_, err = core.Decrypt(f.sfile.ciphertext, key.Bytes(), plaintext)
+	key.Destroy()
+	if err != nil {
+		return fmt.Errorf("failed to decrypt: %w", err)
+	}
+
+	return nil
+}
+
+// encrypt encrypts plaintext, stores the ciphertext in the sealed file
+// and updates the file size. It must be called under lock.
+func (f *vfsFile) encrypt(plaintext []byte) error {
+	var err error
+
+	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
+	f.sfile.ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
+	core.Wipe(plaintext)
+	if err != nil {
+		return fmt.Errorf("failed to enrypt: %w", err)
+	}
+
+	newKey.Freeze()
+	f.sfile.sealedKey = newKey.Seal()
+	f.node.Size = int64(len(plaintext))
+
+	return nil
+}
+
+func (f *vfsFile) Read(p []byte) (int, error) {
+	n, err := f.read(p, f.offset.Load())
+	f.addOffset(int64(n))
 
 	return n, err
 }
 
-func (f *file) read(p []byte, offset int64) (int, error) {
-	if f.node == nil {
+func (f *vfsFile) read(p []byte, offset int64) (int, error) {
+	if offset < 0 {
+		return 0, &fs.PathError{Op: "read", Path: f.name, Err: fs.ErrInvalid}
+	}
+	if f.closed.Load() {
 		return 0, &fs.PathError{Op: "read", Path: f.name, Err: fs.ErrClosed}
 	}
 	if len(p) == 0 {
@@ -74,33 +130,23 @@ func (f *file) read(p []byte, offset int64) (int, error) {
 	if f.node.IsDir() {
 		return 0, &fs.PathError{Op: "read", Path: f.name, Err: syscall.EISDIR}
 	}
-	if offset >= atomic.LoadInt64(&f.node.Size) {
+
+	f.node.RLock()
+	defer f.node.RUnlock()
+
+	if offset >= f.node.Size {
+		return 0, io.EOF
+	}
+	if f.node.Size == 0 {
 		return 0, io.EOF
 	}
 
-	var (
-		err error
-		key *memguard.LockedBuffer
-	)
+	f.sfile.RLock()
+	defer f.sfile.RUnlock()
 
-	if atomic.LoadInt64(&f.node.Size) != 0 {
-		f.mtx.RLock()
-		key, err = f.data.key.Open()
-		f.mtx.RUnlock()
-		if err != nil {
-			return 0, err
-		}
-	} else {
-		return 0, io.EOF
-	}
-
-	plaintext := make([]byte, f.node.Size)
-	f.mtx.RLock()
-	_, err = core.Decrypt(f.data.ciphertext, key.Bytes(), plaintext)
-	key.Destroy()
-	f.mtx.RUnlock()
-	if err != nil {
-		return 0, err
+	plaintext := make([]byte, f.sfile.size())
+	if err := f.decrypt(plaintext); err != nil {
+		return 0, &fs.PathError{Op: "read", Path: f.name, Err: err}
 	}
 
 	core.Copy(p, plaintext[offset:])
@@ -120,40 +166,31 @@ func (f *file) read(p []byte, offset int64) (int, error) {
 	return n, nil
 }
 
-func (f *file) ReadAt(b []byte, off int64) (n int, err error) {
-	if f.node == nil {
-		return 0, &fs.PathError{Op: "readat", Path: f.name, Err: fs.ErrClosed}
-	}
-	if off < 0 {
-		return 0, &fs.PathError{Op: "readat", Path: f.name, Err: errors.New("negative offset")}
-	}
-	if f.flags&_O_ACCESS == os.O_WRONLY {
-		return 0, &fs.PathError{Op: "readat", Path: f.name, Err: fs.ErrPermission}
-	}
-	if f.node.IsDir() {
-		return 0, &fs.PathError{Op: "readat", Path: f.name, Err: syscall.EISDIR}
-	}
-
-	return f.read(b, off)
+func (f *vfsFile) ReadAt(p []byte, off int64) (n int, err error) {
+	return f.read(p, off)
 }
 
-func (f *file) ReadDir(n int) ([]fs.DirEntry, error) {
-	if f.node == nil {
+func (f *vfsFile) ReadDir(n int) ([]fs.DirEntry, error) {
+	if f.closed.Load() {
 		return nil, &fs.PathError{Op: "readdir", Path: f.name, Err: fs.ErrClosed}
 	}
 	if f.flags&_O_ACCESS == os.O_WRONLY {
 		return nil, &fs.PathError{Op: "readat", Path: f.name, Err: fs.ErrPermission}
 	}
 	if !f.node.IsDir() {
-		// TODO: is this the correct error?
 		return nil, &fs.PathError{Op: "readdir", Path: f.Name(), Err: syscall.ENOTDIR}
 	}
 
-	f.mtx.Lock()
-	defer f.mtx.Unlock()
+	// protect f.dirOffset
+	f.Lock()
+	defer f.Unlock()
+
+	// protect f.node.Dir
+	f.node.RLock()
+	defer f.node.RUnlock()
 
 	dirs := f.node.Dir
-	if f.diroffset >= len(dirs) {
+	if f.dirOffset >= len(dirs) {
 		if n <= 0 {
 			return nil, nil
 		}
@@ -169,37 +206,40 @@ func (f *file) ReadDir(n int) ([]fs.DirEntry, error) {
 		n = len(dirs)
 	}
 	// skip '.' and '..' to retain compatibility with os.ReadDir
-	if f.diroffset == 0 {
-		f.diroffset = 2
+	if f.dirOffset == 0 {
+		f.dirOffset = 2
 	}
 
-	infosLen := n - f.diroffset
+	infosLen := n - f.dirOffset
 	if infosLen <= 0 {
 		infosLen = n
 	}
 
 	infos := make([]fs.DirEntry, infosLen)
-	for i, entry := range dirs[f.diroffset:] {
+	for i, entry := range dirs[f.dirOffset:] {
 		if i == n {
 			break
 		}
 
 		infos[i] = &DirEntry{entry.Name, entry.Inode}
 	}
-	f.diroffset += n
+	f.dirOffset += n
 
 	return infos, nil
 }
 
-func (f *file) Write(p []byte) (int, error) {
-	n, err := f.write(p, atomic.LoadInt64(&f.offset))
-	atomic.AddInt64(&f.offset, int64(n))
+func (f *vfsFile) Write(p []byte) (int, error) {
+	n, err := f.write(p, f.offset.Load())
+	f.addOffset(int64(n))
 
 	return n, err
 }
 
-func (f *file) write(p []byte, offset int64) (int, error) {
-	if f.node == nil {
+func (f *vfsFile) write(p []byte, offset int64) (int, error) {
+	if offset < 0 {
+		return 0, &fs.PathError{Op: "write", Path: f.name, Err: fs.ErrInvalid}
+	}
+	if f.closed.Load() {
 		return 0, &fs.PathError{Op: "write", Path: f.name, Err: fs.ErrClosed}
 	}
 	if f.flags&_O_ACCESS == os.O_RDONLY {
@@ -208,89 +248,60 @@ func (f *file) write(p []byte, offset int64) (int, error) {
 	if f.node.IsDir() {
 		return 0, &fs.PathError{Op: "write", Path: f.name, Err: syscall.EISDIR}
 	}
+	// writing past the end of the file is allowed as part of the POSIX spec
+	// and we want to be roughly compatible with that, so we allow it too
 
-	var (
-		err       error
-		plaintext = make([]byte, f.node.Size)
-	)
+	f.node.Lock()
+	defer f.node.Unlock()
 
-	if atomic.LoadInt64(&f.node.Size) != 0 {
-		f.mtx.RLock()
-		key, err := f.data.key.Open()
-		if err != nil {
-			return 0, err
+	f.sfile.Lock()
+	defer f.sfile.Unlock()
+
+	size := f.sfile.size()
+	if writeSize := len(p) + int(offset); writeSize > size {
+		size = writeSize
+	}
+	plaintext := make([]byte, size)
+	if len(f.sfile.ciphertext) > 0 {
+		if err := f.decrypt(plaintext); err != nil {
+			return 0, &fs.PathError{Op: "write", Path: f.name, Err: err}
 		}
-		_, err = core.Decrypt(f.data.ciphertext, key.Bytes(), plaintext)
-		if err != nil {
-			return 0, err
-		}
-		key.Destroy()
-		f.mtx.RUnlock()
-
 	}
 
-	data := plaintext
-	size := len(p) + int(offset)
-	if int64(size) > f.node.Size {
-		data = make([]byte, size)
-		core.Copy(data, plaintext)
-	}
-
-	core.Copy(data[offset:], p)
-	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
-
-	f.mtx.Lock()
-	f.data.ciphertext, err = core.Encrypt(data, newKey.Bytes())
-	f.data.key = newKey.Seal()
-	f.updateSize()
-	core.Wipe(data)
-	f.mtx.Unlock()
-
+	core.Copy(plaintext[offset:], p)
+	err := f.encrypt(plaintext)
 	if err != nil {
-		return 0, err
+		return 0, &fs.PathError{Op: "write", Path: f.name, Err: err}
 	}
 
 	var n int
-	if len(p) < len(data[offset:]) {
+	if len(p) < len(plaintext[offset:]) {
 		n = len(p)
 	} else {
-		n = len(data[offset:])
+		n = len(plaintext[offset:])
 	}
 
 	return n, nil
 }
 
-func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
-	if f.node == nil {
-		return 0, &fs.PathError{Op: "writeat", Path: f.name, Err: fs.ErrClosed}
-	}
-	if off < 0 {
-		return 0, &fs.PathError{Op: "writeat", Path: f.name, Err: errors.New("negative offset")}
-	}
-	if f.flags&_O_ACCESS == os.O_RDONLY {
-		return 0, fs.ErrPermission
-	}
-	if f.node.IsDir() {
-		return 0, &fs.PathError{Op: "writeat", Path: f.name, Err: syscall.EISDIR}
-	}
-
+func (f *vfsFile) WriteAt(b []byte, off int64) (n int, err error) {
 	return f.write(b, off)
 }
 
-func (f *file) WriteString(s string) (n int, err error) {
+func (f *vfsFile) WriteString(s string) (n int, err error) {
 	return f.Write([]byte(s))
 }
 
-func (f *file) Stat() (os.FileInfo, error) {
-	if f.node == nil {
+func (f *vfsFile) Stat() (os.FileInfo, error) {
+	if f.closed.Load() {
 		return nil, &fs.PathError{Op: "stat", Path: f.name, Err: fs.ErrClosed}
 	}
 
 	return &FileInfo{filepath.Base(f.name), f.node}, nil
 }
 
-func (f *file) Seek(offset int64, whence int) (int64, error) {
-	if f.node == nil {
+func (f *vfsFile) Seek(offset int64, whence int) (int64, error) {
+	if f.closed.Load() {
 		return 0, &fs.PathError{Op: "seek", Path: f.name, Err: fs.ErrClosed}
 	}
 	if f.node.IsDir() {
@@ -304,39 +315,36 @@ func (f *file) Seek(offset int64, whence int) (int64, error) {
 			return 0, &fs.PathError{Op: "seek", Path: f.name, Err: fs.ErrInvalid}
 		}
 
-		atomic.StoreInt64(&f.offset, offset)
+		f.setOffset(offset)
 		ret = offset
 	case io.SeekCurrent:
-		if offset < 0 && (atomic.LoadInt64(&f.node.Size)+offset) < 0 {
+		f.node.RLock()
+		if offset < 0 && (f.node.Size+offset) < 0 {
+			f.node.RUnlock()
 			return 0, &fs.PathError{Op: "seek", Path: f.name, Err: fs.ErrInvalid}
 		}
+		f.node.RUnlock()
 
-		ret = atomic.AddInt64(&f.offset, offset)
+		ret = f.addOffset(offset)
 	case io.SeekEnd:
-		ret = atomic.LoadInt64(&f.node.Size) + offset
-		atomic.StoreInt64(&f.offset, ret)
+		f.node.RLock()
+		ret = f.node.Size + offset
+		f.node.RUnlock()
+		f.setOffset(ret)
 	}
 
 	return ret, nil
 }
 
-func (f *file) Sync() error {
-	if f.node == nil {
-		return &fs.PathError{Op: "sync", Path: f.name, Err: fs.ErrClosed}
-	}
-	if f.flags&_O_ACCESS == os.O_RDONLY {
-		return nil
-	}
-
-	f.fs.mtx.Lock()
-	f.fs.data[int(f.node.Ino)] = f.data
-	f.fs.mtx.Unlock()
-
+func (f *vfsFile) Sync() error {
 	return nil
 }
 
-func (f *file) Truncate(size int64) error {
-	if f.node == nil {
+func (f *vfsFile) Truncate(size int64) error {
+	if size < 0 {
+		return &fs.PathError{Op: "truncate", Path: f.name, Err: fs.ErrInvalid}
+	}
+	if f.closed.Load() {
 		return &fs.PathError{Op: "truncate", Path: f.name, Err: fs.ErrClosed}
 	}
 	if f.flags&_O_ACCESS == os.O_RDONLY {
@@ -346,65 +354,58 @@ func (f *file) Truncate(size int64) error {
 		return &fs.PathError{Op: "truncate", Path: f.name, Err: syscall.EISDIR}
 	}
 
-	f.mtx.Lock()
-	defer f.mtx.Unlock()
+	// protect f.node.Size
+	f.node.Lock()
+	defer f.node.Unlock()
 
-	var (
-		err       error
-		plaintext []byte
-	)
-
-	if f.node.Size != 0 {
-		key, err := f.data.key.Open()
-		if err != nil {
-			return err
-		}
-		plaintext = make([]byte, f.node.Size)
-		_, err = core.Decrypt(f.data.ciphertext, key.Bytes(), plaintext)
-		if err != nil {
-			return err
-		}
-		key.Destroy()
-	} else if size == 0 { // data is already nil, no-op
+	if f.node.Size == size {
+		return nil
+	}
+	if f.node.Size == 0 && size == 0 {
+		// file is already empty, no-op
 		return nil
 	}
 
-	// TODO: should this be copied in constant time?
-	if size <= f.node.Size {
-		plaintext = plaintext[:int(size)]
-		newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
-		f.data.ciphertext, err = core.Encrypt(plaintext, newKey.Bytes())
-		f.data.key = newKey.Seal()
-		core.Wipe(plaintext)
-		f.updateSize()
-		if err != nil {
-			return err
+	f.sfile.Lock()
+	defer f.sfile.Unlock()
+
+	if f.node.Size == 0 {
+		// the file is empty and we are extending the file
+		data := make([]byte, size)
+		if err := f.encrypt(data); err != nil {
+			return &fs.PathError{Op: "truncate", Path: f.name, Err: err}
 		}
+		return nil
+	} else if size == 0 {
+		// the file is not empty and we are making it empty
+		f.sfile.ciphertext = nil
+		f.sfile.sealedKey = nil
+		f.node.Size = 0
 		return nil
 	}
 
-	data := make([]byte, int(size))
+	// shrink or extend the file
+	plaintext := make([]byte, f.sfile.size())
+	if err := f.decrypt(plaintext); err != nil {
+		return &fs.PathError{Op: "truncate", Path: f.name, Err: err}
+	}
+
+	data := make([]byte, size)
 	core.Move(data, plaintext)
 
-	newKey := memguard.NewBufferFromBytes(fastrand.Bytes(keySize))
-	f.data.ciphertext, err = core.Encrypt(data, newKey.Bytes())
-	f.data.key = newKey.Seal()
-	core.Wipe(data)
-	f.updateSize()
-	if err != nil {
-		return err
+	if err := f.encrypt(data); err != nil {
+		return &fs.PathError{Op: "truncate", Path: f.name, Err: err}
 	}
 
 	return nil
 }
 
-func (f *file) Close() error {
-	if err := f.Sync(); err != nil {
-		return err
+func (f *vfsFile) Close() error {
+	if f.closed.Load() {
+		return fs.ErrClosed
 	}
-	f.mtx.Lock()
-	f.node = nil
-	f.mtx.Unlock()
+
+	f.closed.Store(true)
 
 	return nil
 }
@@ -440,6 +441,9 @@ func (i *FileInfo) Name() string {
 }
 
 func (i *FileInfo) Size() int64 {
+	i.node.RLock()
+	defer i.node.RUnlock()
+
 	return i.node.Size
 }
 
@@ -448,6 +452,9 @@ func (i *FileInfo) Mode() os.FileMode {
 }
 
 func (i *FileInfo) ModTime() time.Time {
+	i.node.RLock()
+	defer i.node.RUnlock()
+
 	return i.node.Mtime
 }
 

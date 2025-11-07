@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("97777777")
+[]byte("0")
+uint64(17)
+uint64(5)

@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("H\x93\xe3\x10\xcb")
+[]byte("H\x93\xe3\x10ˏ\x8b\xa2")
+uint64(136)
+uint64(75)

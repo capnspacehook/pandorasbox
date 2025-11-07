@@ -51,6 +51,8 @@ func walkTree(n *Node, path string, f func(path string, n *Node)) {
 }
 
 func makeTree(t *testing.T) fs.FS {
+	t.Helper()
+
 	fsys := NewFS()
 	walkTree(tree, tree.name, func(path string, n *Node) {
 		if n.entries == nil {
@@ -62,7 +64,7 @@ func makeTree(t *testing.T) fs.FS {
 				t.Fatalf("error closing file %s: %v", path, err)
 			}
 		} else {
-			if err := fsys.Mkdir(path, 755); err != nil {
+			if err := fsys.Mkdir(path, 0o755); err != nil {
 				t.Fatalf("error creating dir %s: %v", path, err)
 			}
 		}
@@ -71,6 +73,8 @@ func makeTree(t *testing.T) fs.FS {
 }
 
 func checkMarks(t *testing.T, report bool) {
+	t.Helper()
+
 	walkTree(tree, tree.name, func(path string, n *Node) {
 		if n.mark != 1 && report {
 			t.Errorf("node %s mark = %d; expected 1", path, n.mark)
@@ -80,9 +84,8 @@ func checkMarks(t *testing.T, report bool) {
 }
 
 // Assumes that each node name is unique. Good enough for a test.
-// If clear is true, any incoming error is cleared before return. The errors
-// are always accumulated, though.
-func mark(entry fs.DirEntry, err error, errors *[]error, clear bool) error {
+// If err if not nil, it is appended to errors.
+func mark(entry fs.DirEntry, err error, errors *[]error) error {
 	name := entry.Name()
 	walkTree(tree, tree.name, func(path string, n *Node) {
 		if n.name == name {
@@ -91,10 +94,7 @@ func mark(entry fs.DirEntry, err error, errors *[]error, clear bool) error {
 	})
 	if err != nil {
 		*errors = append(*errors, err)
-		if clear {
-			return nil
-		}
-		return err
+		return nil
 	}
 	return nil
 }
@@ -109,13 +109,17 @@ func TestWalkDir(t *testing.T) {
 	if err = os.Chdir(tmpDir); err != nil {
 		t.Fatal("entering temp dir:", err)
 	}
-	defer os.Chdir(origDir)
+	defer func() {
+		err := os.Chdir(origDir)
+		if err != nil {
+			t.Error(err)
+		}
+	}()
 
 	fsys := makeTree(t)
 	errors := make([]error, 0, 10)
-	clear := true
 	markFn := func(path string, entry fs.DirEntry, err error) error {
-		return mark(entry, err, &errors, clear)
+		return mark(entry, err, &errors)
 	}
 	// Expect no errors.
 	err = fs.WalkDir(fsys, ".", markFn)

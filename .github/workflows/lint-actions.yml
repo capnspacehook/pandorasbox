@@ -1,0 +1,21 @@
+name: Lint workflows
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/*"
+  pull_request:
+    branches:
+      - "*"
+    paths:
+      - ".github/workflows/*"
+
+  workflow_dispatch: {}
+
+jobs:
+  lint-workflows:
+    permissions:
+      contents: read
+    uses: capnspacehook/go-workflows/.github/workflows/lint-actions.yml@master

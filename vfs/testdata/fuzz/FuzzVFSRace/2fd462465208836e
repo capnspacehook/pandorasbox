@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("d\x87µ=\xfe\x8b")
+[]byte("d\x87")
+uint64(23)
+uint64(0)
